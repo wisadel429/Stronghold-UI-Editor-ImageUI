@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>卫戍协议 · UI 布局编辑器</title>
+<link rel="icon" href="app.png" />
+<link rel="stylesheet" href="picker.css" />
+</head>
+<body>
+<div class="shell">
+  <header class="top">
+    <div class="top__brand">
+      <div class="mark"><img src="app.png" alt="卫戍协议 UI 布局编辑器" /></div>
+      <div class="top__names">
+        <div class="top__title">卫戍协议：盟约</div>
+        <div class="top__sub">STRONGHOLD PROTOCOL · ALLIANCE <i></i> UI LAYOUT EDITOR</div>
+      </div>
+    </div>
+    <div class="top__right">
+      <span class="tag"><b></b> 内置浏览器</span>
+      <span class="tag tag--ghost" id="nodeTag">NODE · 检测中</span>
+      <span class="tag tag--ghost" id="verTag">v1.0.0</span>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="intro">
+      <div class="intro__eyebrow">GAME ROOT · 本地工具</div>
+      <h1>界面布局<br /><span>编辑台</span></h1>
+      <p class="intro__lead">
+        选中游戏根目录，工具会在左侧载入游戏画面、右侧展开编辑侧边栏。
+        点选元素、拖动、微调位置与尺寸，保存后普通开局也会生效。
+      </p>
+
+      <ol class="steps">
+        <li><b>01</b><span><strong>选择游戏目录</strong><small>包含 public、server 的那一层</small></span></li>
+        <li><b>02</b><span><strong>载入实时画面</strong><small>左侧 16:9 / 21:9 预览，右侧调整</small></span></li>
+        <li><b>03</b><span><strong>保存布局</strong><small>按游戏版本自动存档，可随时读回</small></span></li>
+      </ol>
+
+      <div class="suggest" id="suggest" hidden>
+        <div class="suggest__label">检测到附近的游戏目录</div>
+        <button type="button" class="suggest__item" id="suggestItem">
+          <span class="suggest__name" id="suggestName">—</span>
+          <span class="suggest__path" id="suggestPath">—</span>
+          <span class="suggest__go">直接载入 →</span>
+        </button>
+      </div>
+
+      <div class="recent" id="recent" hidden>
+        <div class="recent__label">最近使用</div>
+        <div class="recent__list" id="recentList"></div>
+      </div>
+
+      <div class="intro__foot">
+        <span class="dot"></span> 只在本机运行 · 不联网 · 对游戏目录的改动可逆
+      </div>
+    </section>
+
+    <section class="picker" aria-label="选择游戏目录">
+      <div class="picker__head">
+        <div>
+          <div class="picker__eyebrow">GAME ROOT · 游戏目录</div>
+          <h2>选择文件夹</h2>
+        </div>
+        <div class="picker__nav">
+          <button type="button" class="btn-icon" id="btnUp" title="上一级">↑</button>
+          <button type="button" class="btn-icon" id="btnRefresh" title="刷新">↻</button>
+        </div>
+      </div>
+
+      <div class="drives" id="drives"></div>
+
+      <div class="pathbar">
+        <span class="pathbar__prompt">PATH</span>
+        <input id="pathInput" class="pathbar__input" spellcheck="false" autocomplete="off" />
+      </div>
+      <div class="crumbs" id="crumbs"></div>
+
+      <div class="listwrap">
+        <div class="list" id="list" role="listbox" tabindex="0"></div>
+        <div class="listing-state" id="listState">正在读取目录…</div>
+      </div>
+
+      <div class="detail" id="detail">
+        <div class="detail__top">
+          <div class="detail__name" id="detailName">未选择目录</div>
+          <div class="detail__badge" id="detailBadge" hidden>游戏目录</div>
+        </div>
+        <div class="detail__path" id="detailPath">在上面的列表里选择一个文件夹</div>
+        <div class="checks" id="checks"></div>
+        <div class="detail__foot">
+          <div class="detail__hint" id="detailHint">需要包含 public/index.html 和 server/ 的那一层</div>
+          <button type="button" class="btn-primary" id="btnStart" disabled>载入并打开编辑器 <span>→</span></button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>非官方同人作品 · 禁止商用 · 与鹰角网络无关</span>
+    <span class="foot__keys"><b>↑ ↓</b> 选择 <b>Enter</b> 进入 <b>Backspace</b> 返回 <b>双击</b> 打开</span>
+  </footer>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="launch">
+    <div class="launch__ring"><i></i><i></i><i></i></div>
+    <div class="launch__eyebrow">PREPARING · 正在准备</div>
+    <h2 class="launch__title" id="launchTitle">正在载入编辑器</h2>
+    <p class="launch__path" id="launchPath"></p>
+    <div class="launch__steps" id="launchSteps"></div>
+    <div class="launch__bar"><i id="launchBar"></i></div>
+    <div class="launch__log" id="launchLog"></div>
+    <div class="launch__error" id="launchError" hidden></div>
+    <div class="launch__foot">
+      <span id="launchTip">首次启动需要建立资源索引，请稍候</span>
+      <div class="launch__actions">
+        <button type="button" class="btn-ghost" id="btnNode" hidden>安装 Node.js</button>
+        <button type="button" class="btn-ghost" id="btnCancel">取消</button>
+        <button type="button" class="btn-primary" id="btnRetry" hidden>重新选择目录</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="picker.js"></script>
+</body>
+</html>

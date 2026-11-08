@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>UI 布局编辑器 · 卫戍协议</title>
+<link rel="icon" href="/ui-editor/app.png" />
+<link rel="stylesheet" href="/ui-editor/studio.css?v=20261107b" />
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <img class="brand__mark" src="/ui-editor/app.png" alt="" />
+      <div class="brand__text">
+        <div class="brand__title">UI 布局编辑器 <span>LAYOUT STUDIO</span></div>
+        <div class="brand__meta">
+          <span id="metaVersion">—</span><i></i><span id="metaDir" title="">—</span>
+        </div>
+      </div>
+    </div>
+    <div class="topbar__right">
+      <div class="status" id="status"><i></i><span>正在载入</span></div>
+      <button class="tb-btn tb-btn--big" id="btnReloadGame" title="刷新页面（等同浏览器刷新，会重新载入编辑器和游戏画面）">↻<em>刷新页面</em></button>
+      <button class="tb-btn tb-btn--big" id="btnReselect" title="更换游戏目录（会立即打开目录页）">目录</button>
+      <button class="tb-btn tb-btn--close" id="btnQuit" title="退出编辑器（会先确认）">×</button>
+    </div>
+  </header>
+
+  <main class="body">
+    <section class="preview">
+      <div class="preview__bar">
+        <div class="preview__left">
+          <div class="seg" id="deviceSeg">
+            <button type="button" data-kind="desktop" class="is-on">电脑版 <em>16:9</em></button>
+            <button type="button" data-kind="mobile">手机端 <em>21:9</em></button>
+          </div>
+          <button type="button" class="mode-btn is-pick" id="btnMode" title="切换拾取 / 操作模式（Tab）" disabled>
+            <i></i><span>拾取元素</span><em>Tab</em>
+          </button>
+          <button type="button" class="multi-btn" id="btnMulti" title="多选模式：点击元素加入 / 移出选择；拖动已选元素整组移动，拖四角整组缩放" disabled>
+            <i></i><span>多选</span><em>Shift</em>
+          </button>
+        </div>
+        <div class="preview__right">
+          <button class="shot-btn" id="btnShot" title="只截取左侧游戏画面并复制到剪贴板" disabled>◉ 截图</button>
+          <span class="zoom mono" id="zoomLabel">—</span>
+          <button class="mini-btn" id="btnFit" title="缩放到适合窗口">适应</button>
+        </div>
+      </div>
+      <div class="stage-area" id="stageArea">
+        <div class="stage" id="stage">
+          <iframe id="game" title="游戏画面" src="about:blank"></iframe>
+          <div class="stage__loading" id="stageLoading">
+            <div class="stage__ring"><i></i><i></i><i></i></div>
+            <div class="stage__text" id="stageText">正在启动游戏画面…</div>
+          </div>
+        </div>
+      </div>
+      <div class="preview__foot">
+        <span id="hint">点击左侧元素选中 · 拖动移动 · 拖四角改尺寸 · Alt+点击放行 · Tab 切换</span>
+        <span class="mono" id="stageSize">1920 × 1080 · 16:9</span>
+      </div>
+    </section>
+
+    <aside class="sidebar">
+      <div class="sb-scroll">
+        <section class="sb-sec">
+          <div class="sb-head"><span class="sb-label">当前选择</span><span class="sb-count" id="selCount">未选中</span></div>
+          <div class="crumbs" id="crumbs"><span class="crumbs__hint">点击左侧画面里的元素开始调整</span></div>
+          <div class="selinfo" id="selInfo" hidden>
+            <div class="selinfo__row">
+              <span class="selinfo__name" id="selName">—</span>
+              <span class="selinfo__size mono" id="selSize">—</span>
+            </div>
+            <div class="selinfo__selector mono" id="selSelector">—</div>
+          </div>
+          <div class="btn-row btn-row--4">
+            <button type="button" id="btnParent" data-action="parent" disabled>父级</button>
+            <button type="button" id="btnChild" data-action="child" disabled>子级</button>
+            <button type="button" id="btnSiblings" data-action="siblings" disabled>同级</button>
+            <button type="button" id="btnClearSel" data-action="clearsel" disabled>清空</button>
+          </div>
+          <div class="btn-row btn-row--3" id="multiRow" hidden>
+            <button type="button" id="btnAddParent" data-action="addparent" disabled>加选父级</button>
+            <button type="button" id="btnAllSiblings" data-action="siblings" disabled>全选同级</button>
+            <button type="button" id="btnClearMulti" data-action="clearsel" disabled>清空选择</button>
+          </div>
+        </section>
+
+        <section class="sb-sec">
+          <div class="sb-head"><span class="sb-label">位置与尺寸</span><span class="sb-unit">设计像素 · 1rem = 100</span></div>
+          <div class="fields" id="fields">
+            <label><span>X</span><input data-field="x" type="number" step="0.5" inputmode="decimal" disabled /></label>
+            <label><span>Y</span><input data-field="y" type="number" step="0.5" inputmode="decimal" disabled /></label>
+            <label><span>宽</span><input data-field="w" type="number" step="1" placeholder="自动" disabled /></label>
+            <label><span>高</span><input data-field="h" type="number" step="1" placeholder="自动" disabled /></label>
+            <label><span>缩放 %</span><input data-field="scale" type="number" step="5" placeholder="100" disabled /></label>
+            <label><span>层级</span><input data-field="z" type="number" step="1" placeholder="自动" disabled /></label>
+          </div>
+          <div class="nudge">
+            <button type="button" class="nudge__dir" data-nudge="0,-1" data-dir="up" disabled>▲</button>
+            <button type="button" class="nudge__dir" data-nudge="0,1" data-dir="down" disabled>▼</button>
+            <button type="button" class="nudge__dir" data-nudge="-1,0" data-dir="left" disabled>◀</button>
+            <button type="button" class="nudge__dir" data-nudge="1,0" data-dir="right" disabled>▶</button>
+            <button type="button" class="nudge__step" id="stepBtn" title="微调步长（0.5 / 1 / 5 / 10 设计像素）">1</button>
+          </div>
+          <div class="btn-row btn-row--4">
+            <button type="button" id="btnZero" data-action="zero" disabled>归零</button>
+            <button type="button" id="btnHide" data-action="hide" disabled>隐藏</button>
+            <button type="button" id="btnReset" data-action="reset" disabled>重置</button>
+            <button type="button" id="btnCopyOther" data-action="copy" disabled title="复制另一设备方案覆盖当前设备">复制另一套</button>
+          </div>
+        </section>
+
+        <section class="sb-sec">
+          <div class="sb-head"><span class="sb-label">图片替换</span><span class="sb-hint" id="imgHint">选中元素后可用</span></div>
+          <div class="imgrow">
+            <input type="file" id="imgFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+            <button type="button" class="img-pick" id="btnImgPick" disabled>
+              <span class="img-pick__thumb" id="imgThumb"></span>
+              <span class="img-pick__text">
+                <strong>选择图片…</strong>
+                <small>PNG / JPG / WEBP / GIF，≤ 20MB</small>
+              </span>
+            </button>
+            <button type="button" class="img-clear" id="btnImgClear" title="清除图片" disabled>×</button>
+          </div>
+          <div class="imgopts">
+            <div class="imgopts__group" id="imgModeGroup">
+              <button type="button" data-imgmode="replace" class="is-on" disabled>替换原样式</button>
+              <button type="button" data-imgmode="overlay" disabled>覆盖在上层</button>
+            </div>
+            <div class="imgopts__group" id="imgFitGroup">
+              <button type="button" data-imgfit="cover" class="is-on" disabled>铺满裁剪</button>
+              <button type="button" data-imgfit="contain" disabled>完整显示</button>
+              <button type="button" data-imgfit="stretch" disabled>拉伸</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="sb-sec">
+          <div class="sb-head"><span class="sb-label">构成分析</span><button type="button" class="sb-mini" id="btnInspect" disabled>检查</button></div>
+          <div class="inspect" id="inspect"><span class="inspect__empty">选中元素后点「检查」，看它是图片 / SVG 还是 CSS 画的</span></div>
+        </section>
+
+        <section class="sb-sec sb-sec--list">
+          <div class="sb-head"><span class="sb-label">已调整 <b id="entryCount">0</b></span><span class="sb-hint">点条目定位</span></div>
+          <div class="entries" id="entries"></div>
+        </section>
+
+        <section class="sb-sec">
+          <div class="sb-head"><span class="sb-label">布局存档</span><span class="sb-hint" id="profileHint">按游戏版本</span></div>
+          <div class="profiles">
+            <select id="profileSelect" class="select"></select>
+            <button type="button" id="btnProfileSave">存</button>
+            <button type="button" id="btnProfileLoad">读</button>
+            <button type="button" id="btnProfileDelete">删</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="sb-foot">
+        <div class="sb-foot__status" id="footStatus">—</div>
+        <div class="sb-foot__actions">
+          <button type="button" class="save-btn" id="btnSave">保存 <em>Ctrl+S</em></button>
+          <button type="button" id="btnUndo">撤销</button>
+          <button type="button" id="btnRedo">重做</button>
+          <button type="button" id="btnReloadLayout" title="从磁盘重新读取布局，不刷新页面">重读布局</button>
+          <button type="button" id="btnCss">CSS</button>
+          <button type="button" id="btnClearAll">清空</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal" id="modal" hidden>
+  <div class="dialog">
+    <div class="dialog__head"><span id="dialogTitle">确认</span><button type="button" id="dialogClose">×</button></div>
+    <div class="dialog__text" id="dialogText"></div>
+    <div class="dialog__foot" id="dialogActions"></div>
+  </div>
+</div>
+
+<div class="modal" id="cssModal" hidden>
+  <div class="dialog dialog--wide">
+    <div class="dialog__head"><span id="cssTitle">生成的 CSS</span><button type="button" id="cssClose">×</button></div>
+    <textarea id="cssText" readonly spellcheck="false"></textarea>
+    <div class="dialog__foot">
+      <span class="dialog__hint">想永久固化：存成 public/ui-editor/ui-layout.css，再在 index.html 里 link</span>
+      <button type="button" id="cssCopy">复制</button>
+      <button type="button" id="cssDownload">下载</button>
+    </div>
+  </div>
+</div>
+
+<div class="switching" id="switching" hidden>
+  <div class="switching__box">
+    <div class="switching__ring"><i></i><i></i><i></i></div>
+    <div class="switching__eyebrow">SWITCHING · 正在切换</div>
+    <h2 id="switchingTitle">正在返回目录选择</h2>
+    <p id="switchingText">编辑器即将关闭，请稍候…</p>
+  </div>
+</div>
+
+<div class="stopped" id="stopped" hidden>
+  <div class="stopped__box">
+    <div class="stopped__eyebrow">SERVICE · STOPPED</div>
+    <h2>编辑服务已停止</h2>
+    <p id="stoppedText">Node 进程已经退出，左侧画面和保存接口都不可用了。</p>
+    <div class="stopped__actions">
+      <button type="button" class="mini-btn" id="stoppedReselect">重新选择目录</button>
+      <button type="button" class="mini-btn" id="stoppedQuit">退出</button>
+    </div>
+  </div>
+</div>
+
+<script src="/ui-editor/studio.js?v=20261107b"></script>
+</body>
+</html>

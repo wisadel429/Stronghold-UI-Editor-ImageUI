@@ -1,0 +1,952 @@
+/* UI 布局编辑器 · 面板样式（.spui 前缀，只作用于编辑器自己的 DOM，不碰游戏样式）
+   注意：本文件只用 ASCII 规则；中文说明见 UI-Editor/README.md。 */
+
+.spui {
+  position: fixed;
+  inset: 0;
+
+  z-index: 2147483647;
+  pointer-events: none;
+  font: 12px/1.5 "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  color: #dbe7e1;
+  -webkit-font-smoothing: antialiased;
+}
+
+.spui *,
+.spui *::before,
+.spui *::after {
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.spui [hidden],
+.spui-panel[hidden],
+.spui-fab[hidden],
+.spui-modal[hidden] {
+  display: none !important;
+}
+
+.spui-panel {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  width: min(320px, 92vw);
+  max-height: calc(100vh - 28px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(11, 16, 14, .94);
+  border: 1px solid #2c3a35;
+  border-radius: 11px;
+  box-shadow: 0 14px 42px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .04);
+  backdrop-filter: blur(7px);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.spui-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #232f29;
+  cursor: move;
+  touch-action: none;
+  background: linear-gradient(180deg, rgba(32, 44, 38, .55), rgba(16, 22, 19, .2));
+}
+
+.spui-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: #e7f2ec;
+  white-space: nowrap;
+}
+
+.spui-mode {
+  flex: none;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a948f;
+  background: #131b17;
+  border: 1px solid #2c3a35;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.spui-mode.is-on {
+  color: #06110d;
+  background: #4ed8af;
+  border-color: #4ed8af;
+}
+
+.spui-min {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: #9fb3a8;
+  background: transparent;
+  border: 1px solid #2c3a35;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.spui-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.spui-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 5px;
+  background: #0b120f;
+  border: 1px solid #24322b;
+  border-radius: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+
+.spui-crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.spui-crumb {
+  flex: none;
+  padding: 1px 4px !important;
+  font: 10px/1.6 Consolas, "Cascadia Mono", monospace !important;
+  color: #9fb3a8 !important;
+  background: none !important;
+  border: 1px solid transparent !important;
+  border-radius: 4px !important;
+}
+
+.spui-crumb:hover {
+  color: #59f4ca !important;
+  border-color: #2c3a35 !important;
+}
+
+.spui-crumb.is-current {
+  color: #ffc600 !important;
+  border-color: rgba(255, 198, 0, .35) !important;
+}
+
+.spui-crumb-sep {
+  flex: none;
+  font-size: 10px;
+  color: #4a5a53;
+}
+
+.spui-crumb-hint {
+  font-size: 11px;
+  color: #59f4ca;
+}
+
+.spui-hintline {
+  margin-top: -2px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #6f8579;
+}
+
+.spui-hintline b {
+  color: #9fb3a8;
+  font-weight: 600;
+}
+
+.spui-devices {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.spui-dev {
+  flex: none;
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+  border-radius: 999px !important;
+  color: #8a948f;
+}
+
+.spui-dev.is-on {
+  color: #06110d !important;
+  font-weight: 700;
+  background: #4ed8af !important;
+  border-color: #4ed8af !important;
+}
+
+.spui-detect {
+  margin-left: auto;
+  font-size: 10px;
+  color: #6f8579;
+  white-space: nowrap;
+}
+
+.spui-detect.is-warn {
+  color: #d8a94a;
+}
+
+.spui button.spui-copy {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: #8fb3a5;
+  background: #0d1512;
+  border-style: dashed;
+}
+
+.spui button.spui-copy:hover:not(:disabled) {
+  color: #59f4ca;
+  border-color: #3f6a5b;
+}
+
+.spui-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.spui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.spui-field span {
+  font-size: 10px;
+  color: #7f9488;
+}
+
+.spui-field input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 5px;
+  font: 12px/1.4 Consolas, "Cascadia Mono", monospace;
+  color: #eef7f2;
+  background: #0b110e;
+  border: 1px solid #2a3731;
+  border-radius: 5px;
+  outline: none;
+}
+
+.spui-field input:focus {
+  border-color: #4ed8af;
+  box-shadow: 0 0 0 1px rgba(78, 216, 175, .35);
+}
+
+.spui-field input:disabled {
+  opacity: .42;
+}
+
+.spui button {
+  font: 11px/1.4 "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  color: #cfdbd6;
+  background: #131b17;
+  border: 1px solid #2c3a35;
+  border-radius: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+  transition: border-color .12s, color .12s, background .12s;
+}
+
+.spui button:hover:not(:disabled) {
+  color: #59f4ca;
+  border-color: #3f6a5b;
+}
+
+.spui button:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+.spui-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+/* 多选相关的一条操作：加选父级 / 全选同级 / 清空选择 */
+.spui-row--multi {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.spui-row--multi button {
+  font-size: 10px !important;
+}
+
+.spui button.is-on {
+  color: #ffc600;
+  border-color: rgba(255, 198, 0, .55);
+}
+
+.spui-mode--multi.is-on {
+  color: #06110d !important;
+  background: #ffc600 !important;
+  border-color: #ffc600 !important;
+}
+
+.spui-nudge {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  width: min(100%, 192px);
+  margin: 2px auto 0;
+}
+
+.spui-dir {
+  height: 30px;
+  padding: 0 !important;
+  font-size: 12px !important;
+  line-height: 1;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.spui-dir[data-dir="up"] {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.spui-dir[data-dir="left"] {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.spui-dir[data-dir="right"] {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.spui-dir[data-dir="down"] {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.spui-dir:active:not(:disabled),
+.spui-step:active:not(:disabled) {
+  color: #59f4ca !important;
+  background: rgba(78, 216, 175, .18) !important;
+  border-color: #4ed8af !important;
+}
+
+.spui-step {
+  grid-column: 2;
+  grid-row: 2;
+  height: 30px;
+  padding: 0 !important;
+  font: 11px Consolas, "Cascadia Mono", monospace !important;
+  color: #9fb3a8 !important;
+}
+
+@media (pointer: coarse), (any-pointer: coarse) {
+  .spui-nudge {
+    width: min(100%, 240px);
+  }
+
+  .spui-dir {
+    height: 44px;
+    font-size: 16px !important;
+  }
+
+  .spui-step {
+    height: 44px;
+    font-size: 13px !important;
+  }
+
+  .spui-field input {
+    padding: 7px 8px;
+    font-size: 14px;
+  }
+
+  .spui-row button,
+  .spui-foot button,
+  .spui button.spui-copy {
+    padding: 9px 6px;
+  }
+
+  .spui-dev {
+    padding: 6px 10px !important;
+  }
+}
+
+.spui-listhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #8a948f;
+}
+
+.spui-listhead b {
+  color: #59f4ca;
+  font-family: Consolas, monospace;
+}
+
+.spui-listhint {
+  margin-left: auto;
+  font-size: 10px;
+  color: #5d6863;
+}
+
+.spui-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.spui-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 3px;
+  border-radius: 5px;
+}
+
+.spui-item:hover {
+  background: rgba(78, 216, 175, .08);
+}
+
+.spui-item-name {
+  flex: 1;
+  min-width: 0;
+  padding: 0 !important;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 11px/1.5 Consolas, "Cascadia Mono", monospace !important;
+  color: #cfd8d3 !important;
+  background: none !important;
+  border: none !important;
+}
+
+.spui-item-name:hover {
+  color: #59f4ca !important;
+}
+
+.spui-item-meta {
+  flex: none;
+  font: 10px/1 Consolas, monospace;
+  color: #7f9488;
+}
+
+.spui-item-drop {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0 !important;
+  font-size: 11px !important;
+  line-height: 1;
+  color: #8a948f !important;
+}
+
+.spui-item-drop:hover {
+  color: #ff7a66 !important;
+  border-color: rgba(231, 49, 24, .6) !important;
+}
+
+.spui-empty {
+  padding: 6px 2px;
+  font-size: 11px;
+  color: #5d6863;
+}
+
+.spui-foot {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding: 8px 10px;
+  border-top: 1px solid #232f29;
+  background: rgba(8, 12, 10, .6);
+}
+
+.spui button.spui-ok {
+  color: #06110d;
+  font-weight: 700;
+  background: #4ed8af;
+  border-color: #4ed8af;
+}
+
+.spui button.spui-ok:hover:not(:disabled) {
+  color: #06110d;
+  background: #59f4ca;
+  border-color: #59f4ca;
+}
+
+.spui-info {
+  padding: 0 10px 8px;
+  font: 10px/1.6 Consolas, "Cascadia Mono", monospace;
+  color: #6f8579;
+}
+
+.spui-info.is-bad {
+  color: #e08b7c;
+}
+
+.spui-box {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: none;
+  pointer-events: none;
+  box-sizing: border-box;
+  will-change: transform, width, height;
+}
+
+.spui-box.is-on {
+  display: block;
+}
+
+/* 多选时除主选之外的成员框 */
+.spui-member {
+  border: 1px dashed rgba(89, 244, 202, .75);
+  background: rgba(89, 244, 202, .05);
+}
+
+.spui-crumb-count {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  padding: 1px 6px;
+  font: 10px/1.7 Consolas, "Cascadia Mono", monospace;
+  color: #06110d;
+  background: #59f4ca;
+  border-radius: 4px;
+  white-space: nowrap;
+  box-shadow: 4px 0 6px -4px rgba(11, 18, 15, .9);
+}
+
+.spui-hover {
+  border: 1px solid rgba(89, 244, 202, .85);
+  background: rgba(89, 244, 202, .1);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
+}
+
+.spui-sel {
+  border: 2px solid #ffc600;
+  background: rgba(255, 198, 0, .07);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .55);
+}
+
+.spui-sel::before,
+.spui-sel::after {
+  content: "";
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: #ffc600;
+}
+
+.spui-sel::before {
+  left: -4px;
+  top: -4px;
+}
+
+.spui-sel::after {
+  right: -4px;
+  bottom: -4px;
+}
+
+.spui-tag {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: none;
+  padding: 1px 6px;
+  font: 10px/1.6 Consolas, "Cascadia Mono", monospace;
+  color: #59f4ca;
+  background: rgba(8, 13, 11, .92);
+  border: 1px solid #2c3a35;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.spui-tag.is-on {
+  display: block;
+}
+
+.spui-tag--sel {
+  color: #ffc600;
+  border-color: rgba(255, 198, 0, .6);
+}
+
+/* ── 缩放手柄（拖角/拖边改尺寸） ───────────────────────── */
+.spui-handles {
+  position: fixed;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  will-change: transform, width, height;
+}
+
+.spui-h {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: #ffc600;
+  border: 1px solid #0b110e;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* 手柄整体贴在选框外侧（还留 1px 缝）：元素内部一个像素都不占，小按钮也能按住直接拖 */
+.spui-h--nw { left: 0; top: 0; transform: translate(calc(-100% - 1px), calc(-100% - 1px)); cursor: nwse-resize; }
+.spui-h--n { left: 50%; top: 0; transform: translate(-50%, calc(-100% - 1px)); cursor: ns-resize; }
+.spui-h--ne { left: 100%; top: 0; transform: translate(1px, calc(-100% - 1px)); cursor: nesw-resize; }
+.spui-h--w { left: 0; top: 50%; transform: translate(calc(-100% - 1px), -50%); cursor: ew-resize; }
+.spui-h--e { left: 100%; top: 50%; transform: translate(1px, -50%); cursor: ew-resize; }
+.spui-h--sw { left: 0; top: 100%; transform: translate(calc(-100% - 1px), 1px); cursor: nesw-resize; }
+.spui-h--s { left: 50%; top: 100%; transform: translate(-50%, 1px); cursor: ns-resize; }
+.spui-h--se { left: 100%; top: 100%; transform: translate(1px, 1px); cursor: nwse-resize; }
+
+@media (pointer: coarse), (any-pointer: coarse) {
+  .spui-h {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+  }
+}
+
+/* 小元素（< 44px）：只保留四角手柄，避免八个挤在一起 */
+.spui-handles.is-compact .spui-h--n,
+.spui-handles.is-compact .spui-h--s,
+.spui-handles.is-compact .spui-h--e,
+.spui-handles.is-compact .spui-h--w {
+  display: none;
+}
+
+.spui-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  padding: 7px 14px;
+  font-size: 12px;
+  color: #dbe7e1;
+  background: rgba(10, 15, 13, .95);
+  border: 1px solid #2c3a35;
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity .16s, transform .16s;
+  pointer-events: none;
+  max-width: 80vw;
+  text-align: center;
+}
+
+.spui-toast.is-on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.spui-toast.is-bad {
+  color: #ffb3a8;
+  border-color: rgba(231, 49, 24, .55);
+}
+
+.spui-fab {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font: 800 13px/44px "Microsoft YaHei", system-ui, sans-serif !important;
+  color: #06110d;
+  background: #4ed8af;
+  border: none;
+  border-radius: 13px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .45);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.spui-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, .58);
+  pointer-events: auto;
+}
+
+.spui-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(780px, 92vw);
+  max-height: 82vh;
+  background: #0c1310;
+  border: 1px solid #2c3a35;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .6);
+}
+
+.spui-dialog-head {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #e7f2ec;
+  border-bottom: 1px solid #232f29;
+}
+
+.spui-dialog-head span {
+  flex: 1;
+}
+
+.spui-dialog-head button {
+  width: 22px;
+  height: 22px;
+  padding: 0 !important;
+  line-height: 1;
+  font-size: 14px !important;
+}
+
+.spui-dialog textarea {
+  flex: 1;
+  min-height: 46vh;
+  padding: 10px 12px;
+  font: 12px/1.55 Consolas, "Cascadia Mono", monospace;
+  color: #cfe6dc;
+  background: #070c0a;
+  border: none;
+  outline: none;
+  resize: vertical;
+}
+
+.spui-dialog-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid #232f29;
+}
+
+.spui-dialog-hint {
+  flex: 1;
+  font-size: 10px;
+  color: #6f8579;
+}
+
+html.spui-editing,
+html.spui-editing body {
+  cursor: crosshair;
+}
+
+html.spui-editing {
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 拾取模式下关掉游戏页面的滚动手势：否则浏览器会把拖动识别成滚动，
+   发出 pointercancel 把拖动打断（触屏"断触"的元凶）。面板自身不受影响。 */
+html.spui-editing #app,
+html.spui-editing #app * {
+  touch-action: none !important;
+}
+
+@media (max-width: 900px) {
+  .spui-panel {
+    width: min(298px, 94vw);
+  }
+
+  .spui-detect {
+    font-size: 9px;
+  }
+}
+
+@media (max-height: 620px) {
+  .spui-panel {
+    top: 8px;
+    right: 8px;
+    max-height: calc(100vh - 16px);
+  }
+
+  .spui-head {
+    padding: 6px 8px;
+  }
+
+  .spui-body {
+    gap: 5px;
+    padding: 8px;
+    min-height: 0;
+  }
+
+  .spui-nudge {
+    width: 100%;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .spui-dir,
+  .spui-step {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    height: 34px;
+  }
+
+  .spui-copy {
+    display: none;
+  }
+
+  .spui-hintline {
+    display: none;
+  }
+
+  .spui-list {
+    max-height: 56px;
+  }
+
+  .spui-listhint {
+    display: none;
+  }
+
+  .spui-foot {
+    padding: 6px 8px;
+  }
+
+  .spui-info {
+    padding: 0 8px 6px;
+  }
+}
+
+@media (max-height: 620px) and (pointer: coarse), (max-height: 620px) and (any-pointer: coarse) {
+  .spui-dir,
+  .spui-step {
+    height: 40px;
+  }
+}
+
+/* 编辑时让开游戏的开场动画（lobbyIntro 的全屏蒙层），否则它会盖住面板并吃掉"点击跳过"的点击 */
+html.spui-editing .spa-entry {
+  display: none !important;
+}
+
+/* ── 存档行（独立版专属：多份布局存档） ─────────────────── */
+.spui-row--profiles {
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 4px;
+}
+
+.spui-select {
+  min-width: 0;
+  padding: 3px 5px;
+  font: 10px/1.5 "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  color: #cfdbd6;
+  background: #0d1512;
+  border: 1px solid #2c3a35;
+  border-radius: 5px;
+}
+
+.spui-row--profiles button {
+  padding: 3px 7px !important;
+  font-size: 10px !important;
+}
+
+/* ── 嵌入编辑台：隐藏悬浮面板，只保留选框 / 手柄 / 标签 ───────────── */
+.spui--embed .spui-panel,
+.spui--embed .spui-fab,
+.spui--embed .spui-modal,
+.spui--embed .spui-toast {
+  display: none !important;
+}
+
+/* 舞台被外壳 CSS transform 缩放时，选框/手柄/标签反向缩放：
+   屏幕上的线宽、手柄和文字大小保持稳定（--spui-inv 由编辑台 postMessage 设置）。 */
+.spui {
+  --spui-inv: 1;
+  --spui-gap: calc(1px * var(--spui-inv));
+}
+
+.spui-hover {
+  border-width: calc(1px * var(--spui-inv));
+}
+
+.spui-member {
+  border-width: calc(1px * var(--spui-inv));
+}
+
+.spui-sel {
+  border-width: calc(2px * var(--spui-inv));
+}
+
+.spui-sel::before,
+.spui-sel::after {
+  width: calc(6px * var(--spui-inv));
+  height: calc(6px * var(--spui-inv));
+}
+
+.spui-sel::before {
+  left: calc(-5px * var(--spui-inv));
+  top: calc(-5px * var(--spui-inv));
+}
+
+.spui-sel::after {
+  right: calc(-5px * var(--spui-inv));
+  bottom: calc(-5px * var(--spui-inv));
+}
+
+.spui-tag {
+  padding: calc(1px * var(--spui-inv)) calc(6px * var(--spui-inv));
+  font-size: calc(10px * var(--spui-inv));
+  border-width: calc(1px * var(--spui-inv));
+}
+
+.spui-h {
+  width: calc(7px * var(--spui-inv));
+  height: calc(7px * var(--spui-inv));
+  border-width: calc(1px * var(--spui-inv));
+}
+
+.spui-h--nw { transform: translate(calc(-100% - var(--spui-gap)), calc(-100% - var(--spui-gap))); }
+.spui-h--n { transform: translate(-50%, calc(-100% - var(--spui-gap))); }
+.spui-h--ne { transform: translate(var(--spui-gap), calc(-100% - var(--spui-gap))); }
+.spui-h--w { transform: translate(calc(-100% - var(--spui-gap)), -50%); }
+.spui-h--e { transform: translate(var(--spui-gap), -50%); }
+.spui-h--sw { transform: translate(calc(-100% - var(--spui-gap)), var(--spui-gap)); }
+.spui-h--s { transform: translate(-50%, var(--spui-gap)); }
+.spui-h--se { transform: translate(var(--spui-gap), var(--spui-gap)); }
+
+/* 四边手柄做成长条矩形，四角保持小方块：更容易区分“拖边改宽/高”和“拖角等比缩放”。 */
+.spui-h--n,
+.spui-h--s {
+  width: calc(14px * var(--spui-inv));
+  height: calc(4px * var(--spui-inv));
+}
+
+.spui-h--e,
+.spui-h--w {
+  width: calc(4px * var(--spui-inv));
+  height: calc(14px * var(--spui-inv));
+}
+
+/* 一键截图时隐藏所有编辑覆盖层，只保留游戏界面。 */
+.spui--capture .spui-box,
+.spui--capture .spui-tag,
+.spui--capture .spui-handles {
+  display: none !important;
+}
