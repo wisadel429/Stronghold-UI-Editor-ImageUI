@@ -2,7 +2,7 @@
 
 # Stronghold-UI-Editor
 
-> 《卫戍协议：盟约》UI 布局编辑器 —— 内置浏览器里左侧看游戏画面、右侧调界面，**实时**拖拽 / 缩放 / 换图，保存后普通开局也生效。
+> 《民间卫戍协议：盟约》UI 布局编辑器（**民间同人二创**，非官方作品） —— 内置浏览器里左侧看游戏画面、右侧调界面，**实时**拖拽 / 缩放 / 换图，保存后普通开局也生效。
 
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-2ea043)
 ![runtime](https://img.shields.io/badge/WebView2-%E7%B3%BB%E7%BB%9F%E6%88%96%E6%B8%B8%E6%88%8F%E7%9B%AE%E5%BD%95-1f6feb)

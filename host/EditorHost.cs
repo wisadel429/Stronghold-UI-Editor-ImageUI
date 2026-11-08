@@ -1,4 +1,4 @@
-// 卫戍协议 · UI 布局编辑器 · 内置浏览器宿主
+// 民间卫戍协议 · UI 布局编辑器 · 内置浏览器宿主
 //
 // 一个很小的 WebView2 窗口：先显示「选择游戏目录」页（host/web/picker.html），
 // 选好以后隐藏控制台启动 app.mjs --embedded，等它把服务端 / 编辑代理起好，
@@ -42,7 +42,7 @@ namespace StrongholdUIEditor
             {
                 if (!createdNew)
                 {
-                    MessageBox.Show("UI 布局编辑器已经在运行。", "卫戍协议 · UI 布局编辑器",
+                    MessageBox.Show("UI 布局编辑器已经在运行。", "民间卫戍协议 · UI 布局编辑器",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
@@ -122,7 +122,7 @@ namespace StrongholdUIEditor
             _settings = Settings.Load();
             _log = new LogFile(Path.Combine(Settings.DataDir, "host.log"));
 
-            Text = "卫戍协议 · UI 布局编辑器";
+            Text = "民间卫戍协议 · UI 布局编辑器";
             BackColor = Color.FromArgb(7, 11, 9);
             ForeColor = Color.FromArgb(232, 242, 234);
             StartPosition = FormStartPosition.CenterScreen;
