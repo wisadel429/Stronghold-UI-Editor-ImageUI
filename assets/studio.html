@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="dark" />
 <title>UI 布局编辑器 · 民间卫戍协议</title>
 <link rel="icon" href="/ui-editor/app.png" />
-<link rel="stylesheet" href="/ui-editor/studio.css?v=20261107b" />
+<link rel="stylesheet" href="/ui-editor/studio.css?v=20261111a" />
 </head>
 <body>
 <div class="app">
@@ -59,7 +59,7 @@
         </div>
       </div>
       <div class="preview__foot">
-        <span id="hint">点击左侧元素选中 · 拖动移动 · 拖四角改尺寸 · Alt+点击放行 · Tab 切换</span>
+        <span id="hint">点击左侧元素选中 · 拖动移动（自动吸附边缘）· 拖四角改尺寸 · Alt+点击放行 · Tab 切换</span>
         <span class="mono" id="stageSize">1920 × 1080 · 16:9</span>
       </div>
     </section>
@@ -112,6 +112,45 @@
             <button type="button" id="btnReset" data-action="reset" disabled>重置</button>
             <button type="button" id="btnCopyOther" data-action="copy" disabled title="复制另一设备方案覆盖当前设备">复制另一套</button>
           </div>
+        </section>
+
+        <section class="sb-sec">
+          <div class="sb-head"><span class="sb-label">对齐与边距</span><span class="sb-hint" id="alignHint">拖动时吸附</span></div>
+          <div class="align-row">
+            <button type="button" class="is-on" id="btnSnap" title="拖动 / 缩放时吸附到屏幕边缘、中线和其他元素的边（按住 Alt 临时关闭）">吸附</button>
+            <button type="button" id="btnSnapDist" title="吸附范围（屏幕像素），点击切换 4 / 8 / 14">8px</button>
+            <button type="button" id="btnGapLock" disabled title="先点选参照元素，再按住 Shift 点要固定的元素，然后点这里">固定边距</button>
+            <button type="button" id="btnGapUnlock" disabled title="解除选中元素的边距固定（位置保持不动）">解除边距</button>
+          </div>
+          <div class="anchors" id="anchors"></div>
+          <div class="align-tip" id="alignTip">Shift+点选两个元素（先参照、后目标）→「固定边距」；之后拖参照元素，目标会保持这段间距，换比例也不走位。</div>
+        </section>
+
+        <section class="sb-sec">
+          <div class="sb-head"><span class="sb-label">母集 <b id="groupCount">0</b></span><span class="sb-hint" id="groupHint">整组移动 · 等比缩放</span></div>
+          <div class="group-row">
+            <button type="button" id="btnGroupCreate" disabled title="把选中的元素打包成母集（Shift+点击可多选）">建母集</button>
+            <button type="button" id="btnGroupDelete" disabled title="删除选中母集，元素留在原位">删母集</button>
+            <button type="button" id="btnGroupDetach" disabled title="把选中的元素移出它所在的母集（位置不变）">移出</button>
+            <button type="button" id="btnGroupBoundary" disabled title="让母集 / 元素贴住最近的屏幕边并保持固定像素，再点一次解除">贴边</button>
+          </div>
+          <div class="groups" id="groups"></div>
+          <div class="group-edges" id="groupEdges" hidden>
+            <div class="group-edges__head">
+              <span>边界固定</span>
+              <label class="group-edges__gap">间距 <input id="groupGap" type="number" step="1" inputmode="decimal" /></label>
+              <button type="button" id="btnGroupEdgeClear" title="解除边界固定">解除</button>
+            </div>
+            <div class="edge-chips" id="edgeChips">
+              <button type="button" data-edge="left" title="贴住屏幕左边，保持固定像素">左</button>
+              <button type="button" data-edge="right" title="贴住屏幕右边，保持固定像素">右</button>
+              <button type="button" data-edge="top" title="贴住屏幕顶部，保持固定像素">上</button>
+              <button type="button" data-edge="bottom" title="贴住屏幕底部，保持固定像素">下</button>
+              <button type="button" data-edge="centerX" title="水平居中">居中X</button>
+              <button type="button" data-edge="centerY" title="垂直居中">居中Y</button>
+            </div>
+          </div>
+          <div class="group-members" id="groupMembers"></div>
         </section>
 
         <section class="sb-sec">
@@ -219,6 +258,6 @@
   </div>
 </div>
 
-<script src="/ui-editor/studio.js?v=20261107b"></script>
+<script src="/ui-editor/studio.js?v=20261111a"></script>
 </body>
 </html>

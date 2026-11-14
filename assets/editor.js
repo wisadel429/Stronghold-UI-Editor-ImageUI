@@ -8,16 +8,20 @@
 // 1920×1080、2K、笔记本小窗、手机横屏下都按同一比例缩放。
 
 import {
-  DEVICE_LABEL, applyLayout, cloneLayout, currentDeviceKind, entryOf, fetchLayout,
-  normalizeLayout, profileOf, removeEntry, saveLayout, setEntry, toCss,
+  ANCHOR_SIDE_LABEL, DEVICE_LABEL, addGroup, applyLayout, boundsOf, clearGroupEdges, cloneLayout,
+  currentDeviceKind, entryOf, fetchLayout, groupById, groupOf, normalizeLayout, profileOf, removeAnchor,
+  removeEntry, removeFromGroup, removeGroup, resolveAnchors, saveLayout, setAnchor, setEntry, setGroupEdge, toCss,
 } from './layout.js';
 import { elementFor, labelFor, selectorFor, shortSelector } from './selector.js';
 
 const POS_KEY = 'sp.uiEditor.pos';
+const SNAP_KEY = 'sp.uiEditor.snapMode';
 const STEP_DEFAULT = 0.5; // 设计像素
 const STEP_FINE = 0.1;
 const STEP_KEY = 1; // 方向键
 const STEP_KEY_FAST = 10; // Shift + 方向键
+// 吸附范围（屏幕像素）。切换顺序即按钮的循环顺序。
+const SNAP_DISTANCES = [4, 8, 14];
 
 const remPx = () => {
   const v = parseFloat(getComputedStyle(document.documentElement).fontSize);
@@ -80,6 +84,18 @@ const MARKUP = `
       <button type="button" data-act="siblings" disabled>全选同级</button>
       <button type="button" data-act="clearsel" disabled>清空选择</button>
     </div>
+    <div class="spui-row spui-row--align">
+      <button type="button" data-act="snap" class="is-on" title="拖动 / 缩放时吸附到屏幕边缘、中线和其他元素的边（按住 Alt 临时关闭）">吸附</button>
+      <button type="button" data-act="snapdist" title="吸附范围（屏幕像素），点击切换">8px</button>
+      <button type="button" data-act="gap" disabled title="先选参照元素，再 Shift+点击目标元素，点这里固定两者的边距">固定边距</button>
+      <button type="button" data-act="ungap" disabled title="解除选中元素的边距固定">解边距</button>
+    </div>
+    <div class="spui-row spui-row--group">
+      <button type="button" data-act="group" disabled title="把选中的元素打包成母集：整组移动、整组等比缩放">建母集</button>
+      <button type="button" data-act="ungroup" disabled title="删除选中母集（元素留在原位）">删母集</button>
+      <button type="button" data-act="detach" disabled title="把选中的元素移出它所在的母集（位置不变）">移出</button>
+      <button type="button" data-act="boundary" disabled title="让选中元素 / 母集贴住最近的屏幕边并保持固定像素（再点一次解除）">贴边</button>
+    </div>
     <div class="spui-listhead">已调整 <b data-role="count">0</b><span class="spui-listhint">点条目可定位</span></div>
     <div class="spui-list" data-role="list"></div>
   </div>
@@ -95,6 +111,7 @@ const MARKUP = `
 </div>
 <div class="spui-box spui-hover" data-role="hoverbox"></div>
 <div class="spui-tag" data-role="hovertag"></div>
+<div class="spui-box spui-groupbox" data-role="groupbox"></div>
 <div class="spui-box spui-sel" data-role="selbox"></div>
 <div class="spui-tag spui-tag--sel" data-role="seltag"></div>
 <div class="spui-handles" data-role="handles" hidden>
@@ -107,6 +124,11 @@ const MARKUP = `
   <i class="spui-h spui-h--s" data-handle="s"></i>
   <i class="spui-h spui-h--se" data-handle="se"></i>
 </div>
+<div class="spui-guides" data-role="guides">
+  <i class="spui-guide spui-guide--v" data-guide="x"></i>
+  <i class="spui-guide spui-guide--h" data-guide="y"></i>
+</div>
+<div class="spui-gapmarks" data-role="gapmarks"></div>
 <div class="spui-toast" data-role="toast"></div>
 <div class="spui-modal" data-role="modal" hidden>
   <div class="spui-dialog">
@@ -168,6 +190,13 @@ function createEditor(payload) {
     batchBefore: null,
     versionKey: '',
     shiftHeld: false,
+    // 对齐辅助：拖动 / 缩放时吸附到屏幕边缘、中线和其他元素的边。
+    snap: true,
+    snapDistance: 8,
+    guides: [],
+    // 当前选中的母集（选中母集时 selection 就是它的全部成员）。
+    groupId: null,
+    snapHint: '',
   };
   // 起始方案 = 当前窗口判定（手机窗口 → 手机端方案）；手动切换只影响本次会话，刷新后跟随窗口。
 
@@ -215,10 +244,21 @@ function createEditor(payload) {
   const modeBtn = q('[data-act="mode"]');
   const multiBtn = q('[data-act="multi"]');
   const multiRow = q('[data-role="multirow"]');
+  const snapBtn = q('[data-act="snap"]');
+  const snapDistBtn = q('[data-act="snapdist"]');
+  const gapBtn = q('[data-act="gap"]');
+  const ungapBtn = q('[data-act="ungap"]');
+  const groupBtn = q('[data-act="group"]');
+  const ungroupBtn = q('[data-act="ungroup"]');
+  const detachBtn = q('[data-act="detach"]');
+  const boundaryBtn = q('[data-act="boundary"]');
+  const groupBoxEl = q('[data-role="groupbox"]');
+  const guideViews = { x: q('[data-guide="x"]'), y: q('[data-guide="y"]') };
+  const gapMarksEl = q('[data-role="gapmarks"]');
   const hideBtn = q('[data-act="hide"]');
   const fields = {};
   for (const input of host.querySelectorAll('[data-field]')) fields[input.dataset.field] = input;
-  const actionButtons = [...host.querySelectorAll('.spui-row button')];
+  const actionButtons = [...host.querySelectorAll('.spui-row:not(.spui-row--align) button')];
   const nudgeButtons = [...host.querySelectorAll('.spui-dir')];
   const stepBtn = q('[data-act="step"]');
 
@@ -227,6 +267,43 @@ function createEditor(payload) {
   const entries = () => profile().entries;
   const entriesOf = (kind) => (state.layout.profiles?.[kind]?.entries || []);
   const otherKind = () => (state.kind === 'mobile' ? 'desktop' : 'mobile');
+  /** 当前设备方案的「边距固定」关系（始终保证是数组）。 */
+  const anchors = () => {
+    const p = profile();
+    if (!Array.isArray(p.anchors)) p.anchors = [];
+    return p.anchors;
+  };
+  const anchorFor = (selector) => anchors().find((a) => a.selector === selector) || null;
+
+  /** 当前设备方案的母集（始终保证是数组）。 */
+  const groups = () => {
+    const p = profile();
+    if (!Array.isArray(p.groups)) p.groups = [];
+    return p.groups;
+  };
+  /** 选中的母集（没有选中就是 null）。 */
+  const selectedGroup = () => (state.groupId ? groupById(profile(), state.groupId) : null);
+  /** 一批选择器 → 还在页面上的元素。 */
+  const elementsOf = (selectors) => (selectors || []).map((selector) => elementFor(selector)).filter(Boolean);
+  /** 屏幕边界（#app）的矩形；取不到就退化成窗口。 */
+  function boundaryBox() {
+    const app = document.getElementById('app');
+    if (app) {
+      const rect = app.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return rect;
+    }
+    return { left: 0, top: 0, right: innerWidth, bottom: innerHeight, width: innerWidth, height: innerHeight };
+  }
+  /** 某个矩形离屏幕某条边的距离（设计像素）；居中类不需要间距，返回 0。 */
+  function boundaryGap(box, side) {
+    const b = boundaryBox();
+    let gap = 0;
+    if (side === 'left') gap = box.left - b.left;
+    else if (side === 'right') gap = b.right - box.right;
+    else if (side === 'top') gap = box.top - b.top;
+    else if (side === 'bottom') gap = b.bottom - box.bottom;
+    return round2(gap * designPerPx());
+  }
 
   // ─────────────────────────────────────────────────────────── 状态 → 界面
   const snapshot = () => cloneLayout(state.layout);
@@ -245,6 +322,8 @@ function createEditor(payload) {
     const bits = [];
     if (entry.hidden) bits.push('隐藏');
     if (entry.image) bits.push('图片');
+    const anchor = anchorFor(entry.selector);
+    if (anchor) bits.push(`锁${Math.round(anchor.gap)}`);
     if (entry.x || entry.y) bits.push(`${entry.x},${entry.y}`);
     if (entry.w != null || entry.h != null) bits.push(`${entry.w ?? '自动'}×${entry.h ?? '自动'}`);
     if (entry.scale != null && entry.scale !== 1) bits.push(`${Math.round(entry.scale * 100)}%`);
@@ -411,6 +490,21 @@ function createEditor(payload) {
     }
     for (const btn of actionButtons) btn.disabled = !has;
     for (const btn of nudgeButtons) btn.disabled = !has;
+    if (gapBtn) gapBtn.disabled = state.selection.length < 2;
+    if (ungapBtn) {
+      ungapBtn.disabled = !state.selection.some((el) => anchorFor(selectorFor(el)));
+    }
+    if (groupBtn) groupBtn.disabled = !state.selection.length;
+    if (ungroupBtn) ungroupBtn.disabled = !selectedGroup();
+    if (detachBtn) {
+      detachBtn.disabled = !state.selection.some((el) => groupOf(profile(), selectorFor(el)));
+    }
+    if (boundaryBtn) {
+      const group = selectedGroup();
+      boundaryBtn.disabled = !state.selection.length;
+      boundaryBtn.classList.toggle('is-on', !!(group && (group.edges || []).length)
+        || state.selection.some((el) => (anchorFor(selectorFor(el)) || {}).to === '@screen'));
+    }
     multiRow.hidden = !(state.multiMode || multi);
     for (const btn of multiRow.querySelectorAll('button')) btn.disabled = !has;
     renderCrumbs();
@@ -430,7 +524,9 @@ function createEditor(payload) {
   function updateInfo() {
     const status = state.saving ? '保存中…' : (state.apiOk ? (state.dirty ? '未保存' : '已同步') : '接口未安装');
     const picked = state.selection.length > 1 ? ` · 选中 ${state.selection.length}` : '';
-    infoEl.textContent = `${innerWidth}×${innerHeight} · 1rem=${Math.round(remPx())}px · ${DEVICE_LABEL[state.kind]} ${entries().length} 项${picked} · ${status}`;
+    const locked = anchors().length ? ` · 锁 ${anchors().length}` : '';
+    const grouped = groups().length ? ` · 母集 ${groups().length}` : '';
+    infoEl.textContent = `${innerWidth}×${innerHeight} · 1rem=${Math.round(remPx())}px · ${DEVICE_LABEL[state.kind]} ${entries().length} 项${locked}${grouped}${picked} · ${status}`;
     infoEl.classList.toggle('is-bad', !state.apiOk);
     schedulePublish();
   }
@@ -443,9 +539,15 @@ function createEditor(payload) {
     updateInfo();
   }
 
-  function select(el, additive = false) {
+  /**
+   * 选中一个元素。
+   * additive = 加选 / 减选（Shift、多选模式）；deep = 只看元素本身（Ctrl+点击、双击、从成员列表点）。
+   * 普通点击一个属于母集的元素 → 选中整个母集（拖动就是整组移动）。
+   */
+  function select(el, additive = false, deep = false) {
     if (!el || el.nodeType !== 1) return;
     if (additive) {
+      state.groupId = null;
       const index = state.selection.indexOf(el);
       if (index >= 0) {
         state.selection.splice(index, 1);
@@ -454,10 +556,23 @@ function createEditor(payload) {
         state.selection.push(el);
         state.selected = el;
       }
-    } else {
-      state.selection = [el];
-      state.selected = el;
+      renderSel();
+      return;
     }
+    const group = deep ? null : groupOf(profile(), selectorFor(el));
+    if (group) {
+      const members = elementsOf(group.members);
+      if (members.length) {
+        state.groupId = group.id;
+        state.selection = members;
+        state.selected = members.includes(el) ? el : members[members.length - 1];
+        renderSel();
+        return;
+      }
+    }
+    state.groupId = null;
+    state.selection = [el];
+    state.selected = el;
     renderSel();
   }
 
@@ -476,6 +591,8 @@ function createEditor(payload) {
     if (kind !== 'desktop' && kind !== 'mobile') return;
     if (kind === state.kind) return;
     state.kind = kind;
+    // 母集是按设备方案分开存的，切方案时先退出当前母集。
+    state.groupId = null;
     state.selected = null;
     state.selection = [];
     refresh();
@@ -486,6 +603,617 @@ function createEditor(payload) {
       toast(`已切换到${DEVICE_LABEL[kind]}方案`);
     }
   }
+
+  // ─────────────────────────────────────────────────────────── 对齐吸附
+  // 拖动 / 缩放时把「被拖的边」吸到附近的参考线上：屏幕左中右 / 上中下，加上父级与同级元素的
+  // 左中右、上中下三段。命中就把位移补齐到刚好对齐，并画一条参考虚线。按住 Alt 临时关闭。
+
+  /** 收集吸附候选线（屏幕像素）。exclude 里的元素自己不算参照。 */
+  function snapLinesFor(exclude) {
+    const xs = [0, innerWidth / 2, innerWidth];
+    const ys = [0, innerHeight / 2, innerHeight];
+    const addRect = (rect) => {
+      if (!rect || (rect.width < 0.5 && rect.height < 0.5)) return;
+      xs.push(rect.left, rect.left + rect.width / 2, rect.right);
+      ys.push(rect.top, rect.top + rect.height / 2, rect.bottom);
+    };
+    const parents = new Set();
+    for (const el of exclude) {
+      if (el && el.isConnected && el.parentElement) parents.add(el.parentElement);
+    }
+    for (const parent of parents) {
+      if (!parent.closest?.('#app')) continue;
+      addRect(parent.getBoundingClientRect());
+      let count = 0;
+      for (const child of parent.children) {
+        if (count++ >= 120) break;
+        if (exclude.has(child) || isEditorNode(child)) continue;
+        addRect(child.getBoundingClientRect());
+      }
+    }
+    return { xs, ys };
+  }
+
+  /** 一组边里找离候选线最近的一条：返回 { delta, line }，delta 是要补的屏幕像素。 */
+  function bestSnap(values, lines, threshold) {
+    let best = null;
+    for (const value of values) {
+      for (const line of lines) {
+        const delta = line - value;
+        const distance = Math.abs(delta);
+        if (distance > threshold) continue;
+        if (!best || distance < Math.abs(best.delta)) best = { delta, line };
+      }
+    }
+    return best;
+  }
+
+  /** 拖动：按被拖元素的并集矩形（左/中/右、上/中/下）算吸附修正。 */
+  function snapDrag(drag, dxPx, dyPx) {
+    const union = drag.union;
+    if (!union || !drag.lines) return { dx: dxPx, dy: dyPx, guides: [] };
+    const left = union.left + dxPx;
+    const right = union.right + dxPx;
+    const top = union.top + dyPx;
+    const bottom = union.bottom + dyPx;
+    const snapX = bestSnap([left, (left + right) / 2, right], drag.lines.xs, state.snapDistance);
+    const snapY = bestSnap([top, (top + bottom) / 2, bottom], drag.lines.ys, state.snapDistance);
+    const guides = [];
+    let dx = dxPx;
+    let dy = dyPx;
+    if (snapX) { dx += snapX.delta; guides.push({ axis: 'x', pos: snapX.line }); }
+    if (snapY) { dy += snapY.delta; guides.push({ axis: 'y', pos: snapY.line }); }
+    return { dx, dy, guides };
+  }
+
+  /** 缩放：只吸「正在被拖动的那一条边」。 */
+  function snapResize(resize, handle, dxPx, dyPx) {
+    const base = resize.rect;
+    const lines = resize.lines;
+    if (!base || !lines || !handle) return { dx: dxPx, dy: dyPx, guides: [] };
+    const guides = [];
+    let dx = dxPx;
+    let dy = dyPx;
+    const xSnap = handle.includes('e')
+      ? bestSnap([base.right + dxPx], lines.xs, state.snapDistance)
+      : handle.includes('w') ? bestSnap([base.left + dxPx], lines.xs, state.snapDistance) : null;
+    if (xSnap) { dx += xSnap.delta; guides.push({ axis: 'x', pos: xSnap.line }); }
+    const ySnap = handle.includes('s')
+      ? bestSnap([base.bottom + dyPx], lines.ys, state.snapDistance)
+      : handle.includes('n') ? bestSnap([base.top + dyPx], lines.ys, state.snapDistance) : null;
+    if (ySnap) { dy += ySnap.delta; guides.push({ axis: 'y', pos: ySnap.line }); }
+    return { dx, dy, guides };
+  }
+
+  /** 参考线：两条固定定位的 1px 虚线，拖动 / 缩放时出现。 */
+  function paintGuides() {
+    const list = state.guides || [];
+    const gx = list.find((g) => g.axis === 'x');
+    const gy = list.find((g) => g.axis === 'y');
+    if (guideViews.x) {
+      guideViews.x.classList.toggle('is-on', !!gx);
+      if (gx) guideViews.x.style.transform = `translate3d(${Math.round(gx.pos)}px, 0, 0)`;
+    }
+    if (guideViews.y) {
+      guideViews.y.classList.toggle('is-on', !!gy);
+      if (gy) guideViews.y.style.transform = `translate3d(0, ${Math.round(gy.pos)}px, 0)`;
+    }
+  }
+
+  function toggleSnap(force) {
+    state.snap = typeof force === 'boolean' ? force : !state.snap;
+    if (!state.snap) state.guides = [];
+    if (snapBtn) snapBtn.classList.toggle('is-on', state.snap);
+    try { localStorage.setItem(SNAP_KEY, state.snap ? '1' : '0'); } catch { /* 隐私模式忽略 */ }
+    toast(state.snap
+      ? `边缘吸附已开启（范围 ${state.snapDistance}px，按住 Alt 拖动可临时关闭）`
+      : '边缘吸附已关闭');
+    schedulePublish();
+  }
+
+  function setSnapDistance(value, quiet = false) {
+    const next = Number(value);
+    state.snapDistance = SNAP_DISTANCES.includes(next) ? next : 8;
+    if (snapDistBtn) {
+      snapDistBtn.textContent = `${state.snapDistance}px`;
+      snapDistBtn.title = `吸附范围 ${state.snapDistance} 屏幕像素（点击切换 ${SNAP_DISTANCES.join(' / ')}）`;
+    }
+    if (!quiet) toast(`吸附范围：${state.snapDistance}px`);
+    schedulePublish();
+  }
+
+  function cycleSnapDistance() {
+    const index = SNAP_DISTANCES.indexOf(state.snapDistance);
+    setSnapDistance(SNAP_DISTANCES[(index + 1) % SNAP_DISTANCES.length] || 8);
+  }
+
+  // ─────────────────────────────────────────────────────────── 边距固定
+  /** 手动移动某个元素之后，把它被固定住的间距改成「松手时的实际间距」，避免解算把它拽回去。 */
+  function rebaseGaps(selectors) {
+    const list = anchors();
+    if (!list.length) return false;
+    const targets = new Set(selectors || []);
+    let changed = false;
+    for (const anchor of list) {
+      if (!targets.has(anchor.selector)) continue;
+      const ref = elementFor(anchor.to);
+      const target = elementFor(anchor.selector);
+      if (!ref || !target) continue;
+      const rr = ref.getBoundingClientRect();
+      const tr = target.getBoundingClientRect();
+      let gapPx = 0;
+      if (anchor.side === 'below') gapPx = tr.top - rr.bottom;
+      else if (anchor.side === 'above') gapPx = rr.top - tr.bottom;
+      else if (anchor.side === 'right') gapPx = tr.left - rr.right;
+      else gapPx = rr.left - tr.right;
+      const gap = round2(gapPx * designPerPx());
+      if (Math.abs((anchor.gap || 0) - gap) > 0.01) {
+        anchor.gap = gap;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /**
+   * 把「边距固定 / 母集贴边」算出来的补偿并进元素的 x / y：之后面板里的数值就等于屏幕上看到的位置，
+   * 手拖 / 缩放 / 输入数值也不会跟解算打架。返回被并过的选择器（这些目标本轮不再追加补偿）。
+   */
+  function bakeOffsets(elements) {
+    const profileNow = profile();
+    const hasWork = (profileNow.anchors || []).length || (profileNow.groups || []).length;
+    if (!hasWork) return [];
+    const extras = resolveAnchors(profileNow);
+    if (!extras.size) return [];
+    const baked = [];
+    for (const el of elements) {
+      if (!el || !el.isConnected) continue;
+      const selector = selectorFor(el);
+      const extra = extras.get(selector);
+      if (!extra || (!extra.x && !extra.y)) continue;
+      const entry = entryOf(profileNow, selector);
+      setEntry(profileNow, selector, {
+        x: round2((entry ? entry.x : 0) + extra.x),
+        y: round2((entry ? entry.y : 0) + extra.y),
+      });
+      baked.push(selector);
+    }
+    return baked;
+  }
+
+  /**
+   * 手动改位置时要跳过的解算目标：这些元素本身 + 它们所属母集的全部成员。
+   * 不跳过的话，母集贴边会把刚拖走的成员又拽回原位。
+   */
+  function manualSkip(selectors) {
+    const set = new Set(selectors || []);
+    for (const selector of selectors || []) {
+      const group = groupOf(profile(), selector);
+      if (group) group.members.forEach((member) => set.add(member));
+    }
+    return [...set];
+  }
+
+  /** 判断两个元素之间该锁哪个方向：中心点差更大的那个轴。 */
+  function sideBetween(refRect, rect) {
+    const dx = (rect.left + rect.width / 2) - (refRect.left + refRect.width / 2);
+    const dy = (rect.top + rect.height / 2) - (refRect.top + refRect.height / 2);
+    if (Math.abs(dy) >= Math.abs(dx)) return dy >= 0 ? 'below' : 'above';
+    return dx >= 0 ? 'right' : 'left';
+  }
+
+  function gapPxBetween(refRect, rect, side) {
+    if (side === 'below') return rect.top - refRect.bottom;
+    if (side === 'above') return refRect.top - rect.bottom;
+    if (side === 'right') return rect.left - refRect.right;
+    return refRect.left - rect.right;
+  }
+
+  /** 把选中元素里的第一个当参照，其余都锁到它身上。 */
+  function lockGaps() {
+    const els = state.selection.filter((el) => el && el.isConnected);
+    if (els.length < 2) {
+      toast('先点选参照元素，再 Shift+点击要固定的元素（顺序：先参照、后目标），然后再点「固定边距」', true);
+      return;
+    }
+    const ref = els[0];
+    const refSelector = selectorFor(ref);
+    const refRect = ref.getBoundingClientRect();
+    const before = snapshot();
+    let count = 0;
+    for (const target of els.slice(1)) {
+      const selector = selectorFor(target);
+      if (!selector || selector === refSelector) continue;
+      const rect = target.getBoundingClientRect();
+      const side = sideBetween(refRect, rect);
+      const gap = round2(gapPxBetween(refRect, rect, side) * designPerPx());
+      setAnchor(profile(), selector, { to: refSelector, side, gap });
+      count++;
+    }
+    if (!count) {
+      toast('没有可固定的元素', true);
+      return;
+    }
+    pushUndo(before);
+    applyLayout(profile());
+    refresh();
+    toast(`已固定 ${count} 个元素相对 ${labelFor(ref)} 的间距：拖参照元素，它们会跟着保持间距`);
+  }
+
+  /** 解除选中元素的边距固定；先把当前补偿值并进 x/y，元素不会跳位置。 */
+  function unlockGaps() {
+    const els = state.selection.filter((el) => el && el.isConnected);
+    if (!els.length) return;
+    const extras = resolveAnchors(profile());
+    const before = snapshot();
+    let count = 0;
+    for (const el of els) {
+      const selector = selectorFor(el);
+      if (!anchorFor(selector)) continue;
+      const extra = extras.get(selector);
+      if (extra) {
+        const entry = entryOf(profile(), selector);
+        setEntry(profile(), selector, {
+          x: round2((entry ? entry.x : 0) + extra.x),
+          y: round2((entry ? entry.y : 0) + extra.y),
+        });
+      }
+      removeAnchor(profile(), selector);
+      count++;
+    }
+    if (!count) {
+      toast('选中的元素没有固定边距', true);
+      return;
+    }
+    pushUndo(before);
+    applyLayout(profile());
+    refresh();
+    toast(`已解除 ${count} 个元素的边距固定（位置保持不动）`);
+  }
+
+  /** 重新测量选中元素（或全部）的间距，用于界面自己变过之后再校正一次。 */
+  function remeasureGaps(selectors) {
+    const list = anchors();
+    if (!list.length) { toast('当前方案还没有固定边距', true); return; }
+    const targets = selectors && selectors.length ? new Set(selectors) : null;
+    const picked = targets ? list.filter((a) => targets.has(a.selector)) : list;
+    if (!picked.length) { toast('选中的元素没有固定边距', true); return; }
+    const before = snapshot();
+    let changed = 0;
+    for (const anchor of picked) {
+      if (rebaseGaps([anchor.selector])) changed++;
+    }
+    applyLayout(profile());
+    if (changed) {
+      pushUndo(before);
+      renderList();
+      toast(`已重测 ${changed} 条边距`);
+    } else {
+      toast('边距已经是最新');
+    }
+  }
+
+  /** 画「边距固定」的示意带：两条虚线夹着间距数值，一眼能看出锁的是哪一段。 */
+  const gapMarks = [];
+  function paintGapMarks() {
+    const active = [];
+    const selected = state.selected && state.selected.isConnected ? state.selected : null;
+    const selectedSelector = selected ? selectorFor(selected) : '';
+    const dragging = !!state.drag;
+    if (state.editing && !dragging && selectedSelector) {
+      for (const anchor of anchors()) {
+        if (anchor.selector !== selectedSelector && anchor.to !== selectedSelector) continue;
+        active.push(anchor);
+        if (active.length >= 4) break;
+      }
+    }
+    while (gapMarks.length < active.length) {
+      const band = document.createElement('div');
+      band.className = 'spui-gapband';
+      const label = document.createElement('span');
+      label.className = 'spui-gapband__label';
+      band.appendChild(label);
+      gapMarksEl.appendChild(band);
+      gapMarks.push({ band, label });
+    }
+    for (let i = 0; i < gapMarks.length; i++) {
+      const view = gapMarks[i];
+      const anchor = active[i];
+      if (!anchor) {
+        view.band.classList.remove('is-on');
+        continue;
+      }
+      const ref = elementFor(anchor.to);
+      const target = elementFor(anchor.selector);
+      if (!ref || !target) {
+        view.band.classList.remove('is-on');
+        continue;
+      }
+      const rr = ref.getBoundingClientRect();
+      const tr = target.getBoundingClientRect();
+      if (rr.width < 1 || tr.width < 1) {
+        view.band.classList.remove('is-on');
+        continue;
+      }
+      const vertical = anchor.side === 'below' || anchor.side === 'above';
+      const from = vertical
+        ? (anchor.side === 'below' ? rr.bottom : tr.bottom)
+        : (anchor.side === 'right' ? rr.right : tr.right);
+      const to = vertical
+        ? (anchor.side === 'below' ? tr.top : rr.top)
+        : (anchor.side === 'right' ? tr.left : rr.left);
+      const spanStart = vertical ? Math.max(rr.left, tr.left) : Math.min(rr.top, tr.top);
+      const spanEnd = vertical ? Math.min(rr.right, tr.right) : Math.max(rr.bottom, tr.bottom);
+      const low = Math.min(from, to);
+      const high = Math.max(from, to);
+      let width = Math.max(6, spanEnd - spanStart);
+      if (!Number.isFinite(width) || width < 6) width = vertical ? Math.min(rr.width, tr.width) : 6;
+      view.band.dataset.side = vertical ? 'v' : 'h';
+      view.band.style.transform = vertical
+        ? `translate3d(${Math.round(spanStart)}px, ${Math.round(low)}px, 0)`
+        : `translate3d(${Math.round(low)}px, ${Math.round(spanStart)}px, 0)`;
+      view.band.style.width = vertical ? `${Math.round(width)}px` : `${Math.round(high - low)}px`;
+      view.band.style.height = vertical ? `${Math.max(2, Math.round(high - low))}px` : `${Math.round(width)}px`;
+      view.label.textContent = `${Math.round(anchor.gap)}`;
+      view.band.classList.add('is-on');
+    }
+  }
+
+
+  // ─────────────────────────────────────────────────────────── 母集
+  // 母集 = 一组元素的编辑单位：拖动整组一起走，拖四角整组等比缩放（成员的位置与大小同比例），
+  // 边界不单独存，每帧按成员实测 rect 求并集（子元素一动边界就跟着动）。
+  // 元素可以随时「移出」母集；母集贴边（edges）让整组平移着保持与屏幕边缘的固定像素。
+
+  /** 元素被删掉 / 重置时，把它从锚定和母集里一并摘干净。 */
+  function forgetSelector(selector) {
+    removeAnchor(profile(), selector);
+    const out = removeFromGroup(profile(), selector);
+    if (state.groupId && !groupById(profile(), state.groupId)) state.groupId = null;
+    return out;
+  }
+
+  function selectGroupById(id) {
+    const group = groupById(profile(), id);
+    if (!group) return;
+    const members = elementsOf(group.members);
+    state.groupId = group.id;
+    state.selection = members;
+    state.selected = members[members.length - 1] || null;
+    renderSel();
+    updateInfo();
+    schedulePublish();
+  }
+
+  /** 把当前选中的元素打成母集。 */
+  function createGroup() {
+    const els = state.selection.filter((el) => el && el.isConnected);
+    if (!els.length) {
+      toast('先选中要打包的元素（Shift+点击可多选），再点「建母集」', true);
+      return;
+    }
+    const before = snapshot();
+    const group = addGroup(profile(), els.map((el) => selectorFor(el)));
+    if (!group) {
+      toast('选中的元素已经都在别的母集里了', true);
+      return;
+    }
+    pushUndo(before);
+    selectGroupById(group.id);
+    toast(`已建母集（${group.members.length} 个元素）：拖动整组一起移动，拖四角整组等比缩放`);
+  }
+
+  /** 删除母集：只删分组关系，元素留在原位。 */
+  function deleteGroup(id) {
+    const group = groupById(profile(), id || state.groupId);
+    if (!group) {
+      toast('没有选中母集', true);
+      return;
+    }
+    const before = snapshot();
+    removeGroup(profile(), group.id);
+    if (state.groupId === group.id) state.groupId = null;
+    pushUndo(before);
+    refresh();
+    toast(`已删除母集（${group.members.length} 个元素保持原位，可单独调整）`);
+  }
+
+  /** 把元素移出母集（位置保持不变，之后可以单独拖动）。 */
+  function detachFromGroup() {
+    const group = selectedGroup();
+    // 选中整个母集时，只移出「主选」的那一个，避免手滑把整组解散。
+    const targets = (group ? [state.selected] : state.selection).filter((el) => el && el.isConnected);
+    if (!targets.length) {
+      toast('先选中要移出的元素', true);
+      return;
+    }
+    const before = snapshot();
+    let count = 0;
+    let emptied = false;
+    for (const el of targets) {
+      const out = removeFromGroup(profile(), selectorFor(el));
+      if (!out) continue;
+      count++;
+      if (out.empty) emptied = true;
+    }
+    if (!count) {
+      toast('选中的元素不在任何母集里', true);
+      return;
+    }
+    if (group) {
+      state.groupId = null;
+      state.selection = targets;
+      state.selected = targets[targets.length - 1];
+    }
+    pushUndo(before);
+    refresh();
+    toast(`已把 ${count} 个元素移出母集${emptied ? '（母集已空，已自动删除）' : ''}：现在可以单独拖动 / 调整`);
+  }
+
+  function nearestBoundarySide(box) {
+    const b = boundaryBox();
+    const options = [
+      { side: 'left', distance: box.left - b.left },
+      { side: 'right', distance: b.right - box.right },
+      { side: 'top', distance: box.top - b.top },
+      { side: 'bottom', distance: b.bottom - box.bottom },
+    ];
+    options.sort((a, c) => a.distance - c.distance);
+    return options[0].side;
+  }
+
+  /**
+   * 贴边：把母集整体 / 元素本身锁到屏幕某条边，保持当前像素距离。
+   * side 不传时取离得最近的一条边（悬浮面板上的「贴边」按钮）。
+   */
+  function lockBoundary(side) {
+    const group = selectedGroup();
+    const before = snapshot();
+    if (group) {
+      const box = boundsOf(group.members);
+      if (!box) {
+        toast('母集成员当前不在界面上', true);
+        return;
+      }
+      const target = side || nearestBoundarySide(box);
+      if (!side && (group.edges || []).some((edge) => edge.side === target)) {
+        clearGroupEdges(profile(), group.id);
+        pushUndo(before);
+        refresh();
+        toast('已解除母集贴边');
+        return;
+      }
+      setGroupEdge(profile(), group.id, target, boundaryGap(box, target));
+      pushUndo(before);
+      refresh();
+      toast(`母集已贴住屏幕${ANCHOR_SIDE_LABEL[target]}：${Math.round(boundaryGap(box, target))} 设计像素`);
+      return;
+    }
+    const els = state.selection.filter((el) => el && el.isConnected);
+    if (!els.length) return;
+    const target = side || nearestBoundarySide(els[0].getBoundingClientRect());
+    if (!side) {
+      const allPinned = els.every((el) => {
+        const anchor = anchorFor(selectorFor(el));
+        return anchor && anchor.to === '@screen' && anchor.side === target;
+      });
+      if (allPinned) {
+        for (const el of els) removeAnchor(profile(), selectorFor(el));
+        pushUndo(before);
+        refresh();
+        toast('已解除屏幕贴边');
+        return;
+      }
+    }
+    for (const el of els) {
+      setAnchor(profile(), selectorFor(el), { to: '@screen', side: target, gap: boundaryGap(el.getBoundingClientRect(), target) });
+    }
+    pushUndo(before);
+    refresh();
+    toast(`已贴住屏幕${ANCHOR_SIDE_LABEL[target]}，保持当前距离`);
+  }
+
+  /** 解除选中母集 / 元素的贴边。 */
+  function unlockBoundary() {
+    const group = selectedGroup();
+    const before = snapshot();
+    let changed = false;
+    if (group && (group.edges || []).length) {
+      clearGroupEdges(profile(), group.id);
+      changed = true;
+    }
+    for (const el of state.selection) {
+      if (!el || !el.isConnected) continue;
+      const selector = selectorFor(el);
+      const anchor = anchorFor(selector);
+      if (anchor && anchor.to === '@screen') {
+        removeAnchor(profile(), selector);
+        changed = true;
+      }
+    }
+    if (!changed) {
+      toast('选中的元素 / 母集没有贴边', true);
+      return;
+    }
+    pushUndo(before);
+    refresh();
+    toast('已解除贴边');
+  }
+
+  /** 改贴边距离（设计像素）：作用于选中母集的全部 edges、或选中元素的屏幕锚定。 */
+  function setBoundaryGap(value) {
+    const gap = Number(value);
+    if (!Number.isFinite(gap)) return;
+    const group = selectedGroup();
+    const before = snapshot();
+    let changed = false;
+    if (group && (group.edges || []).length) {
+      for (const edge of group.edges.slice()) {
+        setGroupEdge(profile(), group.id, edge.side, gap);
+        changed = true;
+      }
+    }
+    for (const el of state.selection) {
+      if (!el || !el.isConnected) continue;
+      const selector = selectorFor(el);
+      const anchor = anchorFor(selector);
+      if (anchor && anchor.to === '@screen') {
+        setAnchor(profile(), selector, { gap });
+        changed = true;
+      }
+    }
+    if (!changed) {
+      toast('先贴边，再改间距', true);
+      return;
+    }
+    pushUndo(before);
+    refresh();
+    toast(`贴边距离：${round2(gap)} 设计像素`);
+  }
+
+  /** 手动移动 / 缩放之后，把母集贴边距离改成「松手时的实际距离」，避免被解算拽回去。 */
+  function rebaseGroupEdges(selectors) {
+    const set = new Set(selectors || []);
+    if (!set.size) return false;
+    let changed = false;
+    for (const group of groups()) {
+      if (!Array.isArray(group.edges) || !group.edges.length) continue;
+      if (!group.members.some((selector) => set.has(selector))) continue;
+      const box = boundsOf(group.members);
+      if (!box) continue;
+      for (const edge of group.edges) {
+        if (edge.side === 'centerX' || edge.side === 'centerY') continue;
+        const gap = boundaryGap(box, edge.side);
+        if (Math.abs((edge.gap || 0) - gap) > 0.01) {
+          edge.gap = gap;
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
+  /** 母集边界：选中母集时和选框重合；只选中成员时用虚线框标出它所属的母集。 */
+  function paintGroupBox(rectOverride = null) {
+    const group = state.editing
+      ? (selectedGroup() || (state.selected && state.selected.isConnected ? groupOf(profile(), selectorFor(state.selected)) : null))
+      : null;
+    const box = group ? (rectOverride || boundsOf(group.members)) : null;
+    if (!box || box.width < 1 || box.height < 1) {
+      groupBoxEl.classList.remove('is-on');
+      groupBoxEl.dataset.paint = '';
+      return;
+    }
+    const key = `${Math.round(box.left)}|${Math.round(box.top)}|${Math.round(box.width)}|${Math.round(box.height)}|${box.width < 24 ? 1 : 0}`;
+    if (groupBoxEl.dataset.paint === key) return;
+    groupBoxEl.dataset.paint = key;
+    groupBoxEl.classList.add('is-on');
+    groupBoxEl.style.transform = `translate3d(${Math.round(box.left)}px, ${Math.round(box.top)}px, 0)`;
+    groupBoxEl.style.width = `${Math.round(box.width)}px`;
+    groupBoxEl.style.height = `${Math.round(box.height)}px`;
+    groupBoxEl.style.setProperty('--spui-group-w', `${Math.round(box.width)}px`);
+  }
+
 
   // ─────────────────────────────────────────────────────────── 选中 / 拖动
   // 按钮里的文字（span.btn__label）、图标（svg > path）默认不单独选，统一落到最近的交互容器；
@@ -598,31 +1326,44 @@ function createEditor(payload) {
     }
     // Shift+点击、或多选模式下点未选中的元素：只加选，不开始拖动
     if (event.shiftKey || (state.multiMode && !state.selection.includes(el))) {
-      select(el, true);
+      select(el, true, true);
       return;
     }
     // 多选模式下点已选中的元素：可以整组拖动；松手没动就把它移出选择
     const toggleOnClick = state.multiMode && state.selection.includes(el);
-    if (!state.selection.includes(el)) select(el);
+    if (!state.selection.includes(el)) select(el, false, deep);
 
+    const before = snapshot();
+    // 被「边距固定 / 母集贴边」补偿过的元素：先把补偿并进 x / y，数值才等于屏幕上看到的位置。
+    const selectors = state.selection.map((target) => selectorFor(target));
+    const skipSet = manualSkip(selectors);
+    const baked = bakeOffsets(state.selection);
     // 一次拖动把所有选中元素按同一位移移动
     const items = state.selection.map((target) => {
       const selector = selectorFor(target);
       const entry = entryOf(profile(), selector);
       return { selector, baseX: entry ? entry.x : 0, baseY: entry ? entry.y : 0 };
     });
+    if (baked.length) applyLayout(profile(), { skip: skipSet, reset: baked });
+    // 吸附参照：拖动开始时量一次并集矩形和候选线（拖动过程中元素在动，只能量一次）
+    const union = unionRect();
+    const lines = state.snap ? snapLinesFor(new Set(state.selection)) : null;
     // 指针捕获：手指滑出这个元素也不丢事件（触屏"断触"的主要来源之一）
     try { el.setPointerCapture?.(event.pointerId); } catch { /* 忽略 */ }
     state.drag = {
       items,
       el,
+      union,
+      lines,
+      skipSet,
+      reset: baked,
       toggleOnClick,
       pointerId: event.pointerId,
       sx: event.clientX,
       sy: event.clientY,
       dx: 0,
       dy: 0,
-      before: snapshot(),
+      before,
       moved: false,
     };
   }
@@ -638,7 +1379,7 @@ function createEditor(payload) {
         y: round2(item.baseY + drag.dy),
       });
     }
-    applyLayout(profile());
+    applyLayout(profile(), { skip: drag.skipSet || drag.reset, reset: drag.reset });
     syncFields();
     schedulePublish();
   }
@@ -657,12 +1398,18 @@ function createEditor(payload) {
     const drag = state.drag;
     if (!drag) return;
     state.drag = null;
+    state.guides = [];
     if (dragRaf) {
       cancelAnimationFrame(dragRaf);
       dragRaf = 0;
     }
     if (drag.moved) {
+      const selectors = drag.items.map((item) => item.selector);
       applyDrag(drag);
+      // 手拖被锁元素 = 改它的间距；拖动整组则是改母集的贴边距离。都按松手时的实际几何重算。
+      const gapChanged = rebaseGaps(selectors);
+      const groupChanged = rebaseGroupEdges(selectors);
+      if (gapChanged || groupChanged || drag.reset.length) applyLayout(profile());
       pushUndo(drag.before);
       renderList();
       updateInfo();
@@ -681,8 +1428,19 @@ function createEditor(payload) {
       const resize = state.resize;
       resize.dx = (event.clientX - resize.sx) * designPerPx();
       resize.dy = (event.clientY - resize.sy) * designPerPx();
-      resize.moved = Math.abs(resize.dx) > 0.5 || Math.abs(resize.dy) > 0.5;
       resize.shift = event.shiftKey;
+      resize.guides = [];
+      if (state.snap && !event.altKey && resize.lines && resize.handle) {
+        const toPx = 1 / designPerPx();
+        const snapped = snapResize(resize, resize.handle, resize.dx * toPx, resize.dy * toPx);
+        if (snapped.guides.length) {
+          resize.dx = round2(resize.dx + (snapped.dx - resize.dx * toPx) * designPerPx());
+          resize.dy = round2(resize.dy + (snapped.dy - resize.dy * toPx) * designPerPx());
+          resize.guides = snapped.guides;
+        }
+      }
+      resize.moved = Math.abs(resize.dx) > 0.5 || Math.abs(resize.dy) > 0.5 || !!resize.guides.length;
+      state.guides = resize.guides;
       scheduleResize();
       event.preventDefault();
       event.stopPropagation();
@@ -700,7 +1458,17 @@ function createEditor(payload) {
       const step = event.altKey ? STEP_FINE : STEP_DEFAULT;
       drag.dx = Math.round(dx / step) * step;
       drag.dy = Math.round(dy / step) * step;
-      drag.moved = Math.abs(drag.dx) > 0.001 || Math.abs(drag.dy) > 0.001;
+      drag.guides = [];
+      if (state.snap && !event.altKey && drag.lines) {
+        const toPx = 1 / designPerPx();
+        const snapped = snapDrag(drag, drag.dx * toPx, drag.dy * toPx);
+        // 把吸附补回来的像素换算回设计像素；吸附时不再按步长取整，否则等于没吸上。
+        drag.dx = round2(drag.dx + (snapped.dx - drag.dx * toPx) * designPerPx());
+        drag.dy = round2(drag.dy + (snapped.dy - drag.dy * toPx) * designPerPx());
+        drag.guides = snapped.guides;
+      }
+      state.guides = drag.guides;
+      drag.moved = Math.abs(drag.dx) > 0.001 || Math.abs(drag.dy) > 0.001 || !!drag.guides.length;
       scheduleDrag();
       event.preventDefault();
       event.stopPropagation();
@@ -744,7 +1512,50 @@ function createEditor(payload) {
     if (!el) return;
     try { event.target.setPointerCapture?.(event.pointerId); } catch { /* 忽略 */ }
 
-    // 多选：拖四角 = 整组按同一倍率缩放
+    // 选中母集：拖手柄 = 整组等比缩放（成员的位置与大小同比例，以对侧边 / 角为原点）。
+    const group = selectedGroup();
+    if (group) {
+      // 先把元素级锚定 / 母集贴边的补偿并进 x / y，缩放起点才等于屏幕上看到的位置。
+      const memberSelectors = state.selection.map((target) => selectorFor(target));
+      const skipSet = manualSkip(memberSelectors);
+      const baked = bakeOffsets(state.selection);
+      if (baked.length) applyLayout(profile(), { skip: skipSet, reset: baked });
+      const rect = unionRect();
+      const items = state.selection.filter((target) => target && target.isConnected).map((target) => {
+        const selector = selectorFor(target);
+        const entry = entryOf(profile(), selector);
+        const box = target.getBoundingClientRect();
+        return {
+          selector,
+          x: entry ? entry.x : 0,
+          y: entry ? entry.y : 0,
+          scale: entry && entry.scale != null ? entry.scale : 1,
+          cx: box.left + box.width / 2,
+          cy: box.top + box.height / 2,
+        };
+      });
+      state.resize = {
+        mode: 'group',
+        groupId: group.id,
+        handle,
+        pointerId: event.pointerId,
+        sx: event.clientX,
+        sy: event.clientY,
+        dx: 0,
+        dy: 0,
+        shift: false,
+        moved: false,
+        guides: [],
+        rect,
+        items,
+        skipSet,
+        reset: baked,
+        before: snapshot(),
+      };
+      return;
+    }
+
+    // 多选（不是母集）：拖四角 = 整组按同一倍率缩放
     if (isMulti()) {
       const bound = unionRect();
       state.resize = {
@@ -767,6 +1578,11 @@ function createEditor(payload) {
     }
 
     const selector = selectorFor(el);
+    const before = snapshot();
+    // 被锁定 / 属于贴边母集的元素先把手拖前的补偿并进 x / y，缩放起点才和屏幕一致。
+    const skipSet = manualSkip([selector]);
+    const baked = bakeOffsets([el]);
+    if (baked.length) applyLayout(profile(), { skip: skipSet, reset: baked });
     const entry = entryOf(profile(), selector);
     const rect = el.getBoundingClientRect();
     const rem = remPx();
@@ -774,6 +1590,11 @@ function createEditor(payload) {
       mode: 'size',
       handle,
       selector,
+      reset: baked,
+      skipSet,
+      rect,
+      lines: state.snap ? snapLinesFor(new Set([el])) : null,
+      guides: [],
       pointerId: event.pointerId,
       sx: event.clientX,
       sy: event.clientY,
@@ -788,13 +1609,62 @@ function createEditor(payload) {
         w: entry && entry.w != null ? entry.w : (rect.width * 100) / rem,
         h: entry && entry.h != null ? entry.h : (rect.height * 100) / rem,
       },
-      before: snapshot(),
+      before,
     };
   }
 
-  function applyResize() {
-    const resize = state.resize;
+  /** 母集缩放的固定点：拖右边固定左边，拖下边固定上边，其余方向取中线。 */
+  function groupOrigin(rect, handle) {
+    return {
+      x: handle.includes('e') ? rect.left : handle.includes('w') ? rect.right : rect.left + rect.width / 2,
+      y: handle.includes('s') ? rect.top : handle.includes('n') ? rect.bottom : rect.top + rect.height / 2,
+    };
+  }
+
+  /** 母集缩放倍率：按被拖的那条边算，四角取变化更大的一轴，保证等比。 */
+  function groupScaleFactor(rect, handle, dxDesign, dyDesign) {
+    if (!rect || rect.width < 2 || rect.height < 2) return 1;
+    const pxPerDesign = 1 / designPerPx();
+    const dxPx = dxDesign * pxPerDesign;
+    const dyPx = dyDesign * pxPerDesign;
+    const kx = handle.includes('e') ? (rect.width + dxPx) / rect.width
+      : handle.includes('w') ? (rect.width - dxPx) / rect.width : 1;
+    const ky = handle.includes('s') ? (rect.height + dyPx) / rect.height
+      : handle.includes('n') ? (rect.height - dyPx) / rect.height : 1;
+    let k = 1;
+    if (kx !== 1 && ky !== 1) k = Math.abs(kx - 1) >= Math.abs(ky - 1) ? kx : ky;
+    else k = kx !== 1 ? kx : ky;
+    if (!Number.isFinite(k) || k <= 0) k = 1;
+    return Math.min(8, Math.max(0.1, k));
+  }
+
+  function applyResize(target) {
+    // 松手时 endResize 已经把 state.resize 清掉了，所以允许调用方把这次缩放的快照传进来。
+    const resize = target || state.resize;
     if (!resize) return;
+
+    // 母集等比缩放：成员 x / y 相对固定点按倍率走，scale 同步乘倍率。
+    if (resize.mode === 'group') {
+      const k = groupScaleFactor(resize.rect, resize.handle, resize.dx, resize.dy);
+      const origin = groupOrigin(resize.rect, resize.handle);
+      const pxToDesign = designPerPx();
+      const skip = resize.items.map((item) => item.selector);
+      for (const item of resize.items) {
+        const x = item.x + (k - 1) * (item.cx - origin.x) * pxToDesign;
+        const y = item.y + (k - 1) * (item.cy - origin.y) * pxToDesign;
+        const scale = Math.min(4, Math.max(0.2, item.scale * k));
+        setEntry(profile(), item.selector, {
+          x: round2(x),
+          y: round2(y),
+          scale: Math.round(scale * 1000) / 1000,
+        });
+      }
+      // 缩放过程中先别让锚定 / 母集贴边跟手抢，松手时再按新几何重算间距。
+      applyLayout(profile(), { skip, reset: skip });
+      syncFields();
+      schedulePublish();
+      return;
+    }
 
     // 多选等比缩放：拖动的对角位移换算成一个共同倍率
     if (resize.mode === 'scale') {
@@ -833,7 +1703,7 @@ function createEditor(payload) {
     if (h < MIN) { if (handle.includes('n')) y = base.y + (base.h - MIN); h = MIN; }
 
     setEntry(profile(), resize.selector, { x: round2(x), y: round2(y), w: round2(w), h: round2(h) });
-    applyLayout(profile());
+    applyLayout(profile(), { skip: resize.skipSet || resize.reset, reset: resize.reset });
     syncFields();
     schedulePublish();
   }
@@ -850,12 +1720,23 @@ function createEditor(payload) {
     const resize = state.resize;
     if (!resize) return;
     state.resize = null;
+    state.guides = [];
     if (resizeRaf) {
       cancelAnimationFrame(resizeRaf);
       resizeRaf = 0;
     }
     if (resize.moved) {
-      applyResize();
+      applyResize(resize);
+      if (resize.mode === 'size') {
+        rebaseGaps([resize.selector]);
+        rebaseGroupEdges([resize.selector]);
+        applyLayout(profile());
+      } else if (resize.mode === 'group') {
+        const selectors = resize.items.map((item) => item.selector);
+        rebaseGaps(selectors);
+        rebaseGroupEdges(selectors);
+        applyLayout(profile());
+      }
       pushUndo(resize.before);
       renderList();
       updateInfo();
@@ -867,7 +1748,13 @@ function createEditor(payload) {
   /** 只改数据、不落撤销点（长按连发时用）。多选时整组一起走。 */
   function applyNudge(dx, dy, step) {
     if (!state.selection.length) return false;
+    const selectors = state.selection.filter((el) => el && el.isConnected).map((el) => selectorFor(el));
+    if (!selectors.length) return false;
+    // 被锁元素 / 贴边母集：先把补偿并进 x / y，这一轮不参与解算，移动完再把新间距记下来。
+    const skipSet = manualSkip(selectors);
+    const baked = bakeOffsets(state.selection);
     for (const el of state.selection) {
+      if (!el || !el.isConnected) continue;
       const selector = selectorFor(el);
       const entry = entryOf(profile(), selector);
       setEntry(profile(), selector, {
@@ -875,7 +1762,10 @@ function createEditor(payload) {
         y: round2((entry ? entry.y : 0) + dy * step),
       });
     }
-    applyLayout(profile());
+    applyLayout(profile(), { skip: skipSet, reset: baked });
+    const gapChanged = rebaseGaps(selectors);
+    const groupChanged = rebaseGroupEdges(selectors);
+    if (gapChanged || groupChanged) applyLayout(profile());
     syncFields();
     renderList();
     updateInfo();
@@ -967,6 +1857,7 @@ function createEditor(payload) {
         modal.hidden = true;
         return;
       }
+      state.groupId = null;
       state.selection = [];
       state.selected = null;
       renderSel();
@@ -1028,6 +1919,7 @@ function createEditor(payload) {
     state.multiMode = next;
     if (!next) {
       // 关闭多选 = 取消选择。
+      state.groupId = null;
       state.selected = null;
       state.selection = [];
     }
@@ -1060,6 +1952,7 @@ function createEditor(payload) {
       toast('没有找到同类元素（同标签 + 同首类名）', true);
       return;
     }
+    state.groupId = null;
     state.selection = [el, ...matches];
     state.selected = matches[matches.length - 1] || el;
     renderSel();
@@ -1120,6 +2013,7 @@ function createEditor(payload) {
     state.undo.length = 0;
     state.redo.length = 0;
     state.dirty = false;
+    state.groupId = null;
     state.selected = null;
     state.selection = [];
     refresh();
@@ -1127,10 +2021,18 @@ function createEditor(payload) {
   }
 
   function clearAll(confirmed = false) {
-    if (!entries().length) return;
-    if (!confirmed && !window.confirm(`清空${DEVICE_LABEL[state.kind]}的 ${entries().length} 项调整？（可用「撤销」恢复，未保存前不影响磁盘）`)) return;
+    if (!entries().length && !anchors().length && !groups().length) return;
+    const total = entries().length;
+    const extras = [
+      anchors().length ? '全部边距固定' : '',
+      groups().length ? `${groups().length} 个母集` : '',
+    ].filter(Boolean).join('、');
+    if (!confirmed && !window.confirm(`清空${DEVICE_LABEL[state.kind]}的 ${total} 项调整${extras ? `和${extras}` : ''}？（可用「撤销」恢复，未保存前不影响磁盘）`)) return;
     const before = snapshot();
     profile().entries = [];
+    profile().anchors = [];
+    profile().groups = [];
+    state.groupId = null;
     pushUndo(before);
     state.selected = null;
     state.selection = [];
@@ -1210,6 +2112,7 @@ function createEditor(payload) {
       if (!res.ok || !body?.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       state.layout = normalizeLayout(body.layout);
       pushUndo(before);
+      state.groupId = null;
       state.selected = null;
       state.selection = [];
       refresh();
@@ -1250,6 +2153,10 @@ function createEditor(payload) {
     if (!confirmed && !window.confirm(`用${DEVICE_LABEL[from]}的 ${source.length} 项覆盖${DEVICE_LABEL[state.kind]}方案？（可用「撤销」恢复）`)) return;
     const before = snapshot();
     profile().entries = JSON.parse(JSON.stringify(source));
+    // 边距锁定 / 母集跟着选择器走，另一套方案的这些关系一并搬过来才完整。
+    profile().anchors = JSON.parse(JSON.stringify(state.layout.profiles?.[from]?.anchors || []));
+    profile().groups = JSON.parse(JSON.stringify(state.layout.profiles?.[from]?.groups || []));
+    state.groupId = null;
     pushUndo(before);
     state.selected = null;
     state.selection = [];
@@ -1313,7 +2220,7 @@ function createEditor(payload) {
     const jump = target.closest('[data-jump]');
     if (jump) {
       const el = elementFor(jump.dataset.jump);
-      if (el) select(el);
+      if (el) select(el, false, true);
       else toast('当前界面没有这个元素，先切到它所在的界面', true);
       return;
     }
@@ -1321,7 +2228,7 @@ function createEditor(payload) {
     const drop = target.closest('[data-drop]');
     if (drop) {
       const before = snapshot();
-      removeEntry(profile(), drop.dataset.drop);
+      forgetSelector(drop.dataset.drop);
       pushUndo(before);
       refresh();
       return;
@@ -1345,11 +2252,20 @@ function createEditor(payload) {
       }
       case 'siblings': selectSiblings(); break;
       case 'clearsel':
+        state.groupId = null;
         state.selection = [];
         state.selected = null;
         renderSel();
         break;
       case 'mode': toggleEditing(); break;
+      case 'snap': toggleSnap(); break;
+      case 'snapdist': cycleSnapDistance(); break;
+      case 'gap': lockGaps(); break;
+      case 'ungap': unlockGaps(); break;
+      case 'group': createGroup(); break;
+      case 'ungroup': deleteGroup(); break;
+      case 'detach': detachFromGroup(); break;
+      case 'boundary': lockBoundary(); break;
       case 'collapse': panel.hidden = true; fab.hidden = false; break;
       case 'expand': panel.hidden = false; fab.hidden = true; break;
       case 'save': void save(); break;
@@ -1364,7 +2280,12 @@ function createEditor(payload) {
       case 'zero': {
         if (!state.selection.length) break;
         const before = snapshot();
-        for (const el of state.selection) setEntry(profile(), selectorFor(el), { x: 0, y: 0 });
+        for (const el of state.selection) {
+          const selector = selectorFor(el);
+          // 归零 = 回到游戏原位；边距锁定 / 母集贴边会把它拽回去，所以顺手解除。
+          forgetSelector(selector);
+          setEntry(profile(), selector, { x: 0, y: 0 });
+        }
         pushUndo(before);
         refresh();
         break;
@@ -1382,7 +2303,11 @@ function createEditor(payload) {
       case 'reset': {
         if (!state.selection.length) break;
         const before = snapshot();
-        for (const el of state.selection) removeEntry(profile(), selectorFor(el));
+        for (const el of state.selection) {
+          const selector = selectorFor(el);
+          forgetSelector(selector);
+          removeEntry(profile(), selector);
+        }
         pushUndo(before);
         refresh();
         break;
@@ -1422,7 +2347,12 @@ function createEditor(payload) {
         updateInfo();
         return;
       }
-      setEntry(profile(), selectorFor(state.selected), {
+      // 被锁元素 / 贴边母集：先把补偿并进 x / y，输入框里的数字才和屏幕一致。
+      const selector = selectorFor(state.selected);
+      const skipSet = manualSkip([selector]);
+      const baked = bakeOffsets([state.selected]);
+      if (baked.length) applyLayout(profile(), { skip: skipSet, reset: baked });
+      setEntry(profile(), selector, {
         x: num(fields.x.value, 0),
         y: num(fields.y.value, 0),
         w: fields.w.value.trim() === '' ? null : num(fields.w.value, null),
@@ -1430,7 +2360,11 @@ function createEditor(payload) {
         scale: fields.scale.value.trim() === '' ? null : num(fields.scale.value, 100) / 100,
         z: fields.z.value.trim() === '' ? null : Math.round(num(fields.z.value, 0)),
       });
-      applyLayout(profile());
+      applyLayout(profile(), { skip: skipSet, reset: baked });
+      if (rebaseGaps([selector]) || rebaseGroupEdges([selector])) {
+        applyLayout(profile());
+        syncFields();
+      }
       renderList();
       updateInfo();
     });
@@ -1518,10 +2452,18 @@ function createEditor(payload) {
   function placeBox(box, tag, el, isSelected) {
     if (!el || !el.isConnected) { hideBox(box, tag); return null; }
     const rect = el.getBoundingClientRect();
-    if (rect.width < 1 && rect.height < 1) { hideBox(box, tag); return null; }
     const label = isSelected
       ? `${labelFor(el)} · ${Math.round(rect.width)}×${Math.round(rect.height)}`
       : labelFor(el);
+    return paintBoxRect(box, tag, rect, label);
+  }
+
+  /** 把框画到任意矩形上（母集选择时用的是成员并集，不是单个元素）。 */
+  function paintBoxRect(box, tag, rect, label) {
+    if (!box || !rect || (rect.width < 1 && rect.height < 1)) {
+      if (box) hideBox(box, tag);
+      return null;
+    }
     // 位置没变就不写样式：空闲时每帧 0 次样式写入，触屏才不会被高亮框拖慢
     const key = `${Math.round(rect.left)}|${Math.round(rect.top)}|${Math.round(rect.width)}|${Math.round(rect.height)}|${label}`;
     if (box.dataset.paint !== key) {
@@ -1635,22 +2577,49 @@ function createEditor(payload) {
         image: entry ? entry.image || null : null,
         imageMode: entry ? entry.imageMode || 'replace' : 'replace',
         imageFit: entry ? entry.imageFit || 'cover' : 'cover',
+        anchor: anchorFor(selector),
         actualW: Math.round((rect.width * 100) / rem),
         actualH: Math.round((rect.height * 100) / rem),
         chain,
       };
     }
+    const anchorByTarget = new Map(anchors().map((anchor) => [anchor.selector, anchor]));
+    const selectedGroupInfo = selectedGroup();
+    const group = selectedGroupInfo || (!selected ? null : groupOf(profile(), selectorFor(selected)));
+    const groupInfo = group ? {
+      id: group.id,
+      name: group.name || '母集',
+      edges: (group.edges || []).map((edge) => ({ ...edge })),
+      members: group.members.map((selector) => {
+        const el = elementFor(selector);
+        return { selector, label: el ? labelFor(el) : shortSelector(selector) };
+      }),
+    } : null;
     return {
       kind: state.kind,
       editing: state.editing,
       handles: state.handles,
       multiMode: state.multiMode,
       step: state.step,
+      snap: state.snap,
+      snapDistance: state.snapDistance,
       dirty: state.dirty,
       saving: state.saving,
       apiOk: state.apiOk,
       counts: { desktop: entriesOf('desktop').length, mobile: entriesOf('mobile').length },
-      entries: entries().map((entry) => ({ ...entry })),
+      entries: entries().map((entry) => ({ ...entry, anchor: anchorByTarget.get(entry.selector) || null })),
+      anchors: anchors().map((anchor) => ({ ...anchor })),
+      groups: groups().map((item) => ({
+        id: item.id,
+        name: item.name || '母集',
+        members: item.members.slice(),
+        edges: (item.edges || []).map((edge) => ({ ...edge })),
+        memberCount: item.members.length,
+        liveCount: item.members.filter((selector) => !!elementFor(selector)).length,
+      })),
+      groupId: state.groupId,
+      group: groupInfo,
+      groupsCount: groups().length,
       selected: selectedInfo,
       selectionCount: state.selection.length,
       shiftHeld: !!state.shiftHeld,
@@ -1671,18 +2640,29 @@ function createEditor(payload) {
       if (field !== 'scale') return;
       const scale = value === '' ? null : num(value, 100) / 100;
       for (const el of state.selection) setEntry(profile(), selectorFor(el), { scale });
-    } else {
-      const patch = {};
-      if (field === 'x') patch.x = num(value, 0);
-      else if (field === 'y') patch.y = num(value, 0);
-      else if (field === 'w') patch.w = value === '' ? null : num(value, null);
-      else if (field === 'h') patch.h = value === '' ? null : num(value, null);
-      else if (field === 'scale') patch.scale = value === '' ? null : num(value, 100) / 100;
-      else if (field === 'z') patch.z = value === '' ? null : Math.round(num(value, 0));
-      else return;
-      setEntry(profile(), selectorFor(state.selected), patch);
+      applyLayout(profile());
+      syncFields();
+      renderList();
+      updateInfo();
+      schedulePublish();
+      return;
     }
-    applyLayout(profile());
+    // 被锁元素 / 贴边母集：先把补偿并进 x / y，随后按新几何把间距记下来。
+    const selector = selectorFor(state.selected);
+    const skipSet = manualSkip([selector]);
+    const baked = bakeOffsets([state.selected]);
+    if (baked.length) applyLayout(profile(), { skip: skipSet, reset: baked });
+    const patch = {};
+    if (field === 'x') patch.x = num(value, 0);
+    else if (field === 'y') patch.y = num(value, 0);
+    else if (field === 'w') patch.w = value === '' ? null : num(value, null);
+    else if (field === 'h') patch.h = value === '' ? null : num(value, null);
+    else if (field === 'scale') patch.scale = value === '' ? null : num(value, 100) / 100;
+    else if (field === 'z') patch.z = value === '' ? null : Math.round(num(value, 0));
+    else return;
+    setEntry(profile(), selector, patch);
+    applyLayout(profile(), { skip: skipSet, reset: baked });
+    if (rebaseGaps([selector]) || rebaseGroupEdges([selector])) applyLayout(profile());
     syncFields();
     renderList();
     updateInfo();
@@ -1721,7 +2701,7 @@ function createEditor(payload) {
         break;
       case 'select': {
         const el = elementFor(data.selector);
-        if (el) select(el);
+        if (el) select(el, false, !!data.deep);
         else toast('当前界面没有这个元素，先切到它所在的界面', true);
         break;
       }
@@ -1750,6 +2730,7 @@ function createEditor(payload) {
         break;
       }
       case 'clearsel':
+        state.groupId = null;
         state.selection = [];
         state.selected = null;
         renderSel();
@@ -1767,7 +2748,11 @@ function createEditor(payload) {
       case 'zero': {
         if (!state.selection.length) break;
         const before = snapshot();
-        for (const el of state.selection) setEntry(profile(), selectorFor(el), { x: 0, y: 0 });
+        for (const el of state.selection) {
+          const selector = selectorFor(el);
+          forgetSelector(selector);
+          setEntry(profile(), selector, { x: 0, y: 0 });
+        }
         pushUndo(before);
         refresh();
         break;
@@ -1775,18 +2760,65 @@ function createEditor(payload) {
       case 'reset': {
         if (!state.selection.length) break;
         const before = snapshot();
-        for (const el of state.selection) removeEntry(profile(), selectorFor(el));
+        for (const el of state.selection) {
+          const selector = selectorFor(el);
+          forgetSelector(selector);
+          removeEntry(profile(), selector);
+        }
         pushUndo(before);
         refresh();
         break;
       }
       case 'dropEntry': {
         const before = snapshot();
-        removeEntry(profile(), data.selector);
+        forgetSelector(String(data.selector || ''));
+        removeEntry(profile(), String(data.selector || ''));
         pushUndo(before);
         refresh();
         break;
       }
+      // ── 母集 ──
+      case 'groupCreate':
+        createGroup();
+        break;
+      case 'groupDelete':
+        deleteGroup(data.id ? String(data.id) : undefined);
+        break;
+      case 'groupSelect':
+        selectGroupById(String(data.id || ''));
+        break;
+      case 'groupDetach':
+        detachFromGroup();
+        break;
+      case 'groupEdge': {
+        const group = selectedGroup();
+        if (!group || !data.side) break;
+        const box = boundsOf(group.members);
+        if (!box) break;
+        const before = snapshot();
+        setGroupEdge(profile(), group.id, String(data.side), boundaryGap(box, String(data.side)));
+        pushUndo(before);
+        refresh();
+        break;
+      }
+      case 'groupEdgeClear': {
+        const group = selectedGroup();
+        if (!group) break;
+        const before = snapshot();
+        clearGroupEdges(profile(), group.id);
+        pushUndo(before);
+        refresh();
+        break;
+      }
+      case 'boundaryLock':
+        lockBoundary(data.side ? String(data.side) : undefined);
+        break;
+      case 'boundaryClear':
+        unlockBoundary();
+        break;
+      case 'boundaryGap':
+        setBoundaryGap(data.value);
+        break;
       case 'copyOther':
         copyOther(!!data.confirmed);
         break;
@@ -1897,6 +2929,45 @@ function createEditor(payload) {
       case 'setStep':
         setStep(Number(data.step) || state.step);
         break;
+      case 'setSnap':
+        if (typeof data.on === 'boolean' && data.on !== state.snap) toggleSnap(data.on);
+        else if (typeof data.on === 'boolean') {
+          state.snap = data.on;
+          if (snapBtn) snapBtn.classList.toggle('is-on', state.snap);
+        }
+        break;
+      case 'setSnapDistance':
+        setSnapDistance(data.value, true);
+        break;
+      case 'lockGap':
+        lockGaps();
+        break;
+      case 'unlockGap':
+        unlockGaps();
+        break;
+      case 'reanchor':
+        // 侧边栏里的「重测」：界面对不上之后，按当前真实几何把间距重新量一遍。
+        remeasureGaps();
+        break;
+      case 'dropAnchor': {
+        const selector = String(data.selector || '');
+        if (!selector || !anchorFor(selector)) break;
+        const extras = resolveAnchors(profile());
+        const extra = extras.get(selector);
+        const before = snapshot();
+        if (extra) {
+          const entry = entryOf(profile(), selector);
+          setEntry(profile(), selector, {
+            x: round2((entry ? entry.x : 0) + extra.x),
+            y: round2((entry ? entry.y : 0) + extra.y),
+          });
+        }
+        removeAnchor(profile(), selector);
+        pushUndo(before);
+        applyLayout(profile());
+        refresh();
+        break;
+      }
       case 'captureMode':
         host.classList.toggle('spui--capture', !!data.on);
         break;
@@ -1936,6 +3007,10 @@ function createEditor(payload) {
           placeBox(memberBoxes[i], null, state.selection[i] || null, false);
         }
         handlesEl.hidden = true;
+        state.guides = [];
+        paintGuides();
+        paintGapMarks();
+        paintGroupBox();
         requestAnimationFrame(frame); // 别停循环：否则切回 UI 编辑时选框再也不会更新
         return;
       }
@@ -1945,13 +3020,21 @@ function createEditor(payload) {
       }
       const selected = state.selected;
       const hover = state.hover && state.hover !== selected && state.hover.isConnected ? state.hover : null;
-      const selRect = placeBox(boxes.sel.box, boxes.sel.tag, selected, true);
+      const groupSelected = !!selectedGroup();
+      const multi = isMulti();
+      // 选中母集时选框就是母集的实时边界（成员并集），只算一次给选框 / 手柄 / 边距示意带复用。
+      const union = multi ? unionRect() : null;
+      const selRect = groupSelected
+        ? paintBoxRect(boxes.sel.box, boxes.sel.tag, union, `母集 · ${state.selection.length} 项`)
+        : placeBox(boxes.sel.box, boxes.sel.tag, selected, true);
       placeBox(boxes.hover.box, boxes.hover.tag, hover, false);
       for (let i = 0; i < memberBoxes.length; i++) {
         placeBox(memberBoxes[i], null, state.selection[i] || null, false);
       }
-      const multi = isMulti();
-      positionHandles(multi ? unionRect() : (selected ? selRect : null), multi);
+      positionHandles(multi ? union : (selected ? selRect : null), multi);
+      paintGuides();
+      paintGapMarks();
+      paintGroupBox(groupSelected ? union : null);
       requestAnimationFrame(frame);
     });
   }
@@ -1960,6 +3043,14 @@ function createEditor(payload) {
   document.documentElement.classList.add('spui-editing');
   host.classList.add('spui--edit');
   fab.hidden = true;
+
+  // 吸附开关 / 范围是个人习惯，记在本地，下次进来还是老样子。
+  try {
+    const saved = localStorage.getItem(SNAP_KEY);
+    if (saved === '0') state.snap = false;
+  } catch { /* 隐私模式忽略 */ }
+  if (snapBtn) snapBtn.classList.toggle('is-on', state.snap);
+  setSnapDistance(state.snapDistance, true);
 
   // 启动动画 / 全屏蒙层会往 body 末尾追加节点（lobbyIntro.js 用 z-index: 2147483647）。
   // 把面板保持在最后一个兄弟节点，同 z-index 时靠 DOM 顺序压在上面。

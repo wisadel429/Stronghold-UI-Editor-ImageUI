@@ -22,6 +22,8 @@ using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
+[assembly: System.Reflection.AssemblyVersion("1.2.1.0")]
+
 namespace StrongholdUIEditor
 {
     internal static class Program
@@ -1176,7 +1178,7 @@ namespace StrongholdUIEditor
 
         private static string HostVersion()
         {
-            try { return typeof(Program).Assembly.GetName().Version.ToString(3); } catch { return "1.0.0"; }
+            try { return typeof(Program).Assembly.GetName().Version.ToString(3); } catch { return "1.2.1"; }
         }
 
         // ─────────────────────────────────────────────────────────── 窗口

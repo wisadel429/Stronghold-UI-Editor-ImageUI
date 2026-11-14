@@ -203,6 +203,35 @@ body::after {
 .intro__foot { margin-top: auto; padding-top: 16px; color: var(--dim); font-size: 11px; }
 .intro__foot .dot { display: inline-block; width: 5px; height: 5px; margin: 0 8px 1px 0; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
 
+/* 仓库地址：左边说明区一处显眼入口，footer 再放一个纯文字链接 */
+.repo { display: flex; align-items: center; gap: 10px; max-width: 470px; margin: 0 0 4px; }
+.repo__label { flex: none; color: var(--dim); font: 10px/1 var(--mono); letter-spacing: .16em; }
+.repo__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 11px;
+  color: var(--green-2);
+  background: rgba(53, 208, 127, .08);
+  border: 1px solid rgba(53, 208, 127, .34);
+  border-radius: 4px;
+  text-decoration: none;
+  font: 11px/1.4 var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.repo__link:hover { color: #06110d; background: var(--green); border-color: var(--green); }
+.repo__mark { flex: none; font-size: 9px; }
+.foot__repo {
+  color: var(--dim);
+  text-decoration: none;
+  font: 10.5px/1 var(--mono);
+  letter-spacing: .04em;
+}
+.foot__repo:hover { color: var(--green-2); }
+
 /* 右：目录选择 */
 .picker {
   display: flex;
@@ -286,6 +315,19 @@ body::after {
 .crumb-sep { color: var(--line-3); }
 
 .listwrap { position: relative; flex: 1; min-height: 120px; margin: 8px 18px 0; border-top: 1px solid var(--line); }
+
+/* 列表上方的一条提示：这一层检测到几个游戏目录 */
+.listnote {
+  margin: 6px 18px 0;
+  padding: 5px 9px;
+  color: var(--green-2);
+  background: rgba(53, 208, 127, .08);
+  border-left: 2px solid var(--green);
+  border-radius: 2px;
+  font: 10.5px/1.6 var(--mono);
+}
+.listnote[hidden] { display: none; }
+.listnote.is-none { color: var(--dim); background: rgba(216, 169, 74, .06); border-left-color: var(--amber); }
 .list {
   position: absolute;
   inset: 0;
@@ -312,6 +354,28 @@ body::after {
 .row:hover { background: rgba(53, 208, 127, .05); }
 .row.is-on { background: rgba(53, 208, 127, .1); border-color: rgba(53, 208, 127, .35); }
 .row.is-cursor { border-color: var(--line-2); }
+/* 检测到游戏目录：整行绿色高亮（不只是左边的小图标），符合条件的直接整条跳出来 */
+.row--game {
+  margin: 1px 0;
+  background: linear-gradient(90deg, rgba(53, 208, 127, .17), rgba(53, 208, 127, .06) 62%, rgba(53, 208, 127, .02));
+  border-color: rgba(53, 208, 127, .4);
+  box-shadow: inset 3px 0 0 var(--green);
+}
+.row--game .row__name { color: var(--green-2); font-weight: 700; }
+.row--game .row__enter { color: var(--green); }
+.row--game:hover {
+  background: linear-gradient(90deg, rgba(53, 208, 127, .27), rgba(53, 208, 127, .1) 62%, rgba(53, 208, 127, .04));
+  border-color: rgba(53, 208, 127, .62);
+}
+.row--game.is-on {
+  background: linear-gradient(90deg, rgba(53, 208, 127, .34), rgba(53, 208, 127, .16) 66%, rgba(53, 208, 127, .06));
+  border-color: var(--green);
+  box-shadow: inset 3px 0 0 var(--green-2), 0 0 0 1px rgba(53, 208, 127, .28), 0 0 16px rgba(53, 208, 127, .12);
+}
+/* 还能直接载入（游戏目录 + Node）：左侧再加一道亮绿描边，和"缺 Node"的目录区分开 */
+.row--ready { box-shadow: inset 3px 0 0 var(--green-2); }
+.row--ready .row__icon { color: #06110d; background: var(--green-2); border-color: var(--green-2); }
+.row--ready.is-on { box-shadow: inset 3px 0 0 var(--green-2), 0 0 0 1px rgba(123, 240, 176, .45), 0 0 20px rgba(53, 208, 127, .18); }
 .row__icon {
   display: grid;
   place-items: center;
@@ -340,6 +404,7 @@ body::after {
 }
 .badge--game { color: #06110d; background: var(--green); border-color: var(--green); font-weight: 700; }
 .badge--node { color: var(--green-2); border-color: rgba(53, 208, 127, .4); }
+.badge--ready { color: #06110d; background: var(--green-2); border-color: var(--green-2); font-weight: 700; }
 .row__enter { flex: none; color: var(--line-3); font: 11px/1 var(--mono); }
 .row:hover .row__enter { color: var(--green-2); }
 

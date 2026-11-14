@@ -16,10 +16,17 @@ const LAYOUT_ROUTE = '/ui-editor/layout';
 const MAX_BODY = 512 * 1024;
 const MAX_IMAGE = 20 * 1024 * 1024;
 const MAX_ENTRIES = 2000;
+const MAX_ANCHORS = 400;
+const MAX_GROUPS = 200;
+const MAX_GROUP_MEMBERS = 200;
 const MAX_SELECTOR = 400;
 const MAX_ABS = 20000;
-const LAYOUT_VERSION = 2;
+const LAYOUT_VERSION = 4;
 const DEVICES = ['desktop', 'mobile'];
+const ANCHOR_SIDES = ['below', 'above', 'right', 'left'];
+const BOUNDARY_TARGET = '@screen';
+const BOUNDARY_SIDES = ['left', 'right', 'top', 'bottom', 'centerX', 'centerY'];
+const GROUP_ID_RE = /^[A-Za-z0-9._-]{1,40}$/;
 const IMAGE_RE = /^\/ui-editor\/images\/[A-Za-z0-9._@-]+$/;
 const IMAGE_TYPES = {
   'image/png': 'png',
@@ -90,6 +97,75 @@ function sanitizeEntries(list) {
   return [...bySelector.values()];
 }
 
+/**
+ * 「边距固定」关系：目标元素 + 参照元素 + 方向 + 间距（设计像素，允许负数表示重叠）。
+ * to === '@screen' 表示锁到屏幕边界，方向换成 left/right/top/bottom/centerX/centerY。
+ */
+function sanitizeAnchor(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const selector = safeSelector(raw.selector);
+  if (!selector) return null;
+  const boundary = raw.to === BOUNDARY_TARGET;
+  const to = boundary ? BOUNDARY_TARGET : safeSelector(raw.to);
+  if (!to || selector === to) return null;
+  const sides = boundary ? BOUNDARY_SIDES : ANCHOR_SIDES;
+  if (!sides.includes(raw.side)) return null;
+  return { selector, to, side: raw.side, gap: round2(clampAbs(finite(raw.gap, 0))) };
+}
+
+function sanitizeAnchors(list) {
+  const items = Array.isArray(list) ? list.slice(0, MAX_ANCHORS) : [];
+  const bySelector = new Map();
+  for (const item of items) {
+    const anchor = sanitizeAnchor(item);
+    if (!anchor) continue;
+    bySelector.delete(anchor.selector);
+    bySelector.set(anchor.selector, anchor);
+  }
+  return [...bySelector.values()];
+}
+
+/** 母集：id + 名字 + 成员 + 边界锁定。一个元素只能属于一个母集。 */
+function sanitizeGroup(raw, index) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = typeof raw.id === 'string' && GROUP_ID_RE.test(raw.id) ? raw.id : `group-${index + 1}`;
+  const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 60) : '';
+  const members = [];
+  for (const item of Array.isArray(raw.members) ? raw.members.slice(0, MAX_GROUP_MEMBERS) : []) {
+    const selector = safeSelector(item);
+    if (!selector || members.includes(selector)) continue;
+    members.push(selector);
+  }
+  if (!members.length) return null;
+  const edges = [];
+  for (const item of Array.isArray(raw.edges) ? raw.edges.slice(0, 6) : []) {
+    if (!item || !BOUNDARY_SIDES.includes(item.side)) continue;
+    if (edges.some((edge) => edge.side === item.side)) continue;
+    edges.push({ side: item.side, gap: round2(clampAbs(finite(item.gap, 0))) });
+  }
+  return { id, name, members, edges };
+}
+
+function sanitizeGroups(list) {
+  const out = [];
+  const claimed = new Set();
+  const ids = new Set();
+  const items = Array.isArray(list) ? list.slice(0, MAX_GROUPS) : [];
+  items.forEach((item, index) => {
+    const group = sanitizeGroup(item, index);
+    if (!group) return;
+    const members = group.members.filter((selector) => !claimed.has(selector));
+    if (!members.length) return;
+    let id = group.id;
+    let n = 2;
+    while (ids.has(id)) id = `${group.id}-${n++}`;
+    ids.add(id);
+    members.forEach((selector) => claimed.add(selector));
+    out.push({ ...group, id, members });
+  });
+  return out;
+}
+
 function sanitizeLayout(payload) {
   const source = payload && typeof payload === 'object' ? payload : {};
   const profilesIn = source.profiles && typeof source.profiles === 'object' ? source.profiles : null;
@@ -103,7 +179,17 @@ function sanitizeLayout(payload) {
     } else if (legacy && kind === 'desktop') {
       list = legacy;
     }
-    profiles[kind] = { entries: sanitizeEntries(list) };
+    const anchorsIn = profilesIn
+      ? (Array.isArray(profilesIn[kind]) ? null : profilesIn[kind]?.anchors)
+      : null;
+    const groupsIn = profilesIn
+      ? (Array.isArray(profilesIn[kind]) ? null : profilesIn[kind]?.groups)
+      : null;
+    profiles[kind] = {
+      entries: sanitizeEntries(list),
+      anchors: sanitizeAnchors(anchorsIn),
+      groups: sanitizeGroups(groupsIn),
+    };
   }
   return { version: LAYOUT_VERSION, updatedAt: new Date().toISOString(), profiles };
 }

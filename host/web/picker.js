@@ -15,6 +15,7 @@
     crumbs: el('crumbs'),
     list: el('list'),
     listState: el('listState'),
+    listNote: el('listNote'),
     btnUp: el('btnUp'),
     btnRefresh: el('btnRefresh'),
     detailName: el('detailName'),
@@ -301,11 +302,18 @@
       ui.list.appendChild(up);
     }
 
+    var gameCount = 0;
     (message.folders || []).forEach(function (folder) {
+      // 能直接载入 = 是游戏目录 + 找到 Node 运行时；整行绿色高亮，一眼挑出来。
+      var ready = !!(folder.isGame && folder.hasNode);
+      if (folder.isGame) gameCount++;
       var row = document.createElement('div');
-      row.className = 'row' + (folder.isGame ? ' row--game' : '');
+      row.className = 'row'
+        + (folder.isGame ? ' row--game' : '')
+        + (ready ? ' row--ready' : '');
       row.dataset.path = folder.path;
       row.setAttribute('role', 'option');
+      row.title = folder.path + (ready ? '\n可直接载入' : folder.isGame ? '\n游戏目录（缺 Node 运行时）' : '');
 
       var icon = document.createElement('span');
       icon.className = 'row__icon';
@@ -332,6 +340,12 @@
         nodeBadge.textContent = 'NODE';
         badges.appendChild(nodeBadge);
       }
+      if (ready) {
+        var readyBadge = document.createElement('span');
+        readyBadge.className = 'badge badge--ready';
+        readyBadge.textContent = '可载入';
+        badges.appendChild(readyBadge);
+      }
       if (badges.children.length) row.appendChild(badges);
 
       var enter = document.createElement('span');
@@ -343,6 +357,19 @@
       row.ondblclick = function () { navigate(folder.path, false); };
       ui.list.appendChild(row);
     });
+
+    // 顶部提示：这个目录下有几个游戏目录（已经置顶并整行标绿）。
+    if (ui.listNote) {
+      if (gameCount > 0) {
+        ui.listNote.hidden = false;
+        ui.listNote.textContent = '检测到 ' + gameCount + ' 个游戏目录，已置顶并整行标绿 · 双击进入，单击选中后点右下角载入';
+        ui.listNote.classList.remove('is-none');
+      } else {
+        ui.listNote.hidden = false;
+        ui.listNote.classList.add('is-none');
+        ui.listNote.textContent = '这一层没有检测到游戏目录：往上返回或直接点进子文件夹找';
+      }
+    }
   }
 
   function select(path, probeImmediately) {

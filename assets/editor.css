@@ -950,3 +950,106 @@ html.spui-editing .spa-entry {
 .spui--capture .spui-handles {
   display: none !important;
 }
+
+/* ── 对齐吸附：面板上的一排开关 ───────────────────────────── */
+.spui-row--align {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.spui-row--align button {
+  padding: 4px 3px !important;
+  font-size: 10px !important;
+  white-space: nowrap;
+}
+
+/* ── 对齐吸附：拖动 / 缩放时出现的参考虚线 ─────────────────── */
+.spui-guides {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spui-guide {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: none;
+  background: #59f4ca;
+  box-shadow: 0 0 7px rgba(89, 244, 202, .75);
+  pointer-events: none;
+}
+
+.spui-guide.is-on {
+  display: block;
+}
+
+.spui-guide--v {
+  width: calc(1px * var(--spui-inv));
+  height: 100vh;
+}
+
+.spui-guide--h {
+  width: 100vw;
+  height: calc(1px * var(--spui-inv));
+}
+
+/* ── 边距固定：两条虚线夹住间距数值 ───────────────────────── */
+.spui-gapmarks {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spui-gapband {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: none;
+  background: rgba(89, 244, 202, .1);
+  pointer-events: none;
+}
+
+.spui-gapband.is-on {
+  display: block;
+}
+
+.spui-gapband[data-side="v"] {
+  border-top: calc(1px * var(--spui-inv)) dashed rgba(89, 244, 202, .9);
+  border-bottom: calc(1px * var(--spui-inv)) dashed rgba(89, 244, 202, .9);
+}
+
+.spui-gapband[data-side="h"] {
+  border-left: calc(1px * var(--spui-inv)) dashed rgba(89, 244, 202, .9);
+  border-right: calc(1px * var(--spui-inv)) dashed rgba(89, 244, 202, .9);
+}
+
+.spui-gapband__label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  padding: 0 calc(4px * var(--spui-inv));
+  transform: translate(-50%, -50%);
+  font: calc(10px * var(--spui-inv))/1.45 Consolas, "Cascadia Mono", monospace;
+  color: #06110d;
+  background: #59f4ca;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* ── 母集 ─────────────────────────────────────────────────── */
+/* 只选中母集里的某个成员时，用虚线框标出它所属母集的实时边界（边界跟着子元素动）。 */
+.spui-groupbox {
+  border: calc(1px * var(--spui-inv)) dashed rgba(168, 140, 255, .9);
+  background: rgba(168, 140, 255, .06);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .35);
+}
+
+.spui-row--group {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.spui-row--group button {
+  padding: 4px 3px !important;
+  font-size: 10px !important;
+  white-space: nowrap;
+}

@@ -17,17 +17,50 @@
 //
 // 运行时由 apply.js 调用 applyLayout(profile)：把某一套方案编译成一段 CSS 写进 <style>，用 !important
 // 覆盖游戏样式。位移用独立的 translate 属性（不是 transform），不会破坏游戏自带的 transform 动画。
+//
+// 「边距固定」(anchors)：除了逐条的绝对偏移，一套方案还可以带若干条锚定关系，
+//   { selector: 被锁的元素, to: 参照元素, side: 'below'|'above'|'right'|'left', gap: 设计像素 }
+// 意思是被锁元素与参照元素在某一个轴上的间距固定为 gap。applyLayout 在写完基础位移之后按真实
+// rect 反算还需要补多少 translate（见 resolveAnchors），这样换比例 / 换分辨率时游戏自己重排参照
+// 元素，被锁元素会跟着走，间距保持不变。
+//   把 to 写成 '@screen' 表示锁到**屏幕边界**：side 取 left/right/top/bottom/centerX/centerY，
+//   gap 是从那条边到元素对应边的固定像素（centerX / centerY 忽略 gap）。
+//
+// 「母集」(groups)：一组元素打包成编辑用的整体，
+//   { id, name, members: [selector…], edges: [{ side, gap }] }
+//   · 选中母集 = 选中全部成员：拖动整组一起动，拖手柄整组等比缩放（成员大小与位置同比例）；
+//   · 母集边界不单独存，而是每帧按成员实测 rect 求并集（见 groupBounds），所以子元素一动边界就跟着变；
+//   · edges 让母集**整体**贴住屏幕某条边保持固定像素（整组平移，组内相对关系不变）。
 
-export const LAYOUT_VERSION = 2;
+export const LAYOUT_VERSION = 4;
 export const STYLE_ID = 'sp-ui-layout-style';
 export const API_URL = '/ui-editor/layout';
 export const DEVICES = ['desktop', 'mobile'];
 
 export const DEVICE_LABEL = { desktop: '电脑版', mobile: '手机端' };
+export const ANCHOR_SIDE_LABEL = {
+  below: '下方',
+  above: '上方',
+  right: '右侧',
+  left: '左侧',
+  top: '顶部',
+  bottom: '底部',
+  centerX: '水平居中',
+  centerY: '垂直居中',
+};
+export const ANCHOR_SIDES = ['below', 'above', 'right', 'left'];
+export const SCREEN_SIDES = ['left', 'right', 'top', 'bottom', 'centerX', 'centerY'];
 
 const MAX_SELECTOR = 400;
 const MAX_ENTRIES = 2000;
+const MAX_ANCHORS = 400;
+const MAX_GROUPS = 200;
+const MAX_GROUP_MEMBERS = 200;
 const MAX_ABS = 20000; // 设计像素
+// 屏幕边界锚定：left/right/top/bottom 是「边到边」的固定像素，centerX/centerY 是居中。
+// 屏幕边界锚定：left/right/top/bottom 是「边到边」的固定像素，centerX/centerY 是居中。
+const BOUNDARY_TARGET = '@screen';
+const BOUNDARY_SIDES = ['left', 'right', 'top', 'bottom', 'centerX', 'centerY'];
 // 只允许编辑器自己的图片目录，避免把远程 URL / 脚本写进布局。
 const IMAGE_RE = /^\/ui-editor\/images\/[A-Za-z0-9._@-]+$/;
 
@@ -105,14 +138,188 @@ function normalizeEntries(list) {
   return [...bySelector.values()];
 }
 
+/**
+ * 校验 / 规整一条「边距固定」关系。同一对元素只保留一条（目标唯一）。
+ * gap 允许负数：负值表示两个元素互相重叠这么多，同样需要固定。
+ * to === '@screen' 时是屏幕边界锚定，side 换成 left/right/top/bottom/centerX/centerY。
+ */
+export function normalizeAnchor(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const selector = typeof raw.selector === 'string' ? raw.selector.trim().slice(0, MAX_SELECTOR) : '';
+  const to = typeof raw.to === 'string' ? raw.to.trim().slice(0, MAX_SELECTOR) : '';
+  if (!selector || !to || selector === to) return null;
+  const boundary = to === BOUNDARY_TARGET;
+  if (boundary ? !BOUNDARY_SIDES.includes(raw.side) : !ANCHOR_SIDES.includes(raw.side)) return null;
+  const gap = round2(clampAbs(finite(raw.gap, 0)));
+  return { selector, to, side: raw.side, gap };
+}
+
+/** 同一目标只留最后一条；参照元素自己也可以被别的元素参照（允许链式）。 */
+export function normalizeAnchors(list) {
+  const bySelector = new Map();
+  const items = Array.isArray(list) ? list.slice(0, MAX_ANCHORS) : [];
+  for (const item of items) {
+    const anchor = normalizeAnchor(item);
+    if (!anchor) continue;
+    bySelector.delete(anchor.selector);
+    bySelector.set(anchor.selector, anchor);
+  }
+  return [...bySelector.values()];
+}
+
+export function anchorOf(profile, selector) {
+  if (!profile || !selector) return null;
+  return (profile.anchors || []).find((a) => a.selector === selector) || null;
+}
+
+/** 写入 / 更新 / 删除一条锚定（gap 传 null 或删除用 removeAnchor）。 */
+export function setAnchor(profile, selector, patch) {
+  if (!profile || !selector) return null;
+  if (!Array.isArray(profile.anchors)) profile.anchors = [];
+  const index = profile.anchors.findIndex((a) => a.selector === selector);
+  const base = index >= 0 ? profile.anchors[index] : { selector, to: '', side: 'below', gap: 0 };
+  const next = normalizeAnchor({ ...base, ...patch, selector });
+  if (!next) {
+    if (index >= 0) profile.anchors.splice(index, 1);
+    return null;
+  }
+  if (index >= 0) profile.anchors[index] = next;
+  else profile.anchors.push(next);
+  return next;
+}
+
+export function removeAnchor(profile, selector) {
+  if (!profile || !Array.isArray(profile.anchors)) return false;
+  const index = profile.anchors.findIndex((a) => a.selector === selector);
+  if (index >= 0) profile.anchors.splice(index, 1);
+  return index >= 0;
+}
+
+// ─────────────────────────────────────────────────────────── 母集
+const GROUP_ID_RE = /^[A-Za-z0-9._-]{1,40}$/;
+
+/** 一条母集：id + 名字 + 成员选择器 + 边界锁定（edges）。成员为空时返回 null（空母集没意义）。 */
+export function normalizeGroup(raw, fallbackId = '') {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = typeof raw.id === 'string' && GROUP_ID_RE.test(raw.id) ? raw.id : fallbackId;
+  if (!id || !GROUP_ID_RE.test(id)) return null;
+  const name = typeof raw.name === 'string' && raw.name.trim()
+    ? raw.name.trim().slice(0, 60)
+    : '';
+  const members = [];
+  for (const item of Array.isArray(raw.members) ? raw.members.slice(0, MAX_GROUP_MEMBERS) : []) {
+    const selector = typeof item === 'string' ? item.trim().slice(0, MAX_SELECTOR) : '';
+    if (!selector || members.includes(selector)) continue;
+    members.push(selector);
+  }
+  if (!members.length) return null;
+  const edges = [];
+  for (const item of Array.isArray(raw.edges) ? raw.edges.slice(0, 6) : []) {
+    if (!item || !BOUNDARY_SIDES.includes(item.side)) continue;
+    if (edges.some((edge) => edge.side === item.side)) continue;
+    edges.push({ side: item.side, gap: round2(clampAbs(finite(item.gap, 0))) });
+  }
+  return { id, name, members, edges };
+}
+
+/** 一个元素只能属于一个母集：后面重复出现的成员会被前一个母集吃掉。 */
+export function normalizeGroups(list) {
+  const out = [];
+  const claimed = new Set();
+  const ids = new Set();
+  const items = Array.isArray(list) ? list.slice(0, MAX_GROUPS) : [];
+  items.forEach((item, index) => {
+    const group = normalizeGroup(item, `group-${index + 1}`);
+    if (!group) return;
+    const members = group.members.filter((selector) => !claimed.has(selector));
+    if (!members.length) return;
+    let id = group.id;
+    let n = 2;
+    while (ids.has(id)) id = `${group.id}-${n++}`;
+    ids.add(id);
+    members.forEach((selector) => claimed.add(selector));
+    out.push({ ...group, id, members });
+  });
+  return out;
+}
+
+export function groupById(profile, id) {
+  if (!profile || !id || !Array.isArray(profile.groups)) return null;
+  return profile.groups.find((group) => group.id === id) || null;
+}
+
+/** 元素属于哪个母集。 */
+export function groupOf(profile, selector) {
+  if (!profile || !selector || !Array.isArray(profile.groups)) return null;
+  return profile.groups.find((group) => group.members.includes(selector)) || null;
+}
+
+/** 新建一个母集（成员已经在别的母集里就跳过）。 */
+export function addGroup(profile, members, name = '') {
+  if (!profile) return null;
+  if (!Array.isArray(profile.groups)) profile.groups = [];
+  const claimed = new Set(profile.groups.flatMap((group) => group.members));
+  const fresh = [];
+  for (const selector of Array.isArray(members) ? members : []) {
+    if (typeof selector !== 'string' || !selector.trim()) continue;
+    if (claimed.has(selector) || fresh.includes(selector)) continue;
+    fresh.push(selector);
+  }
+  if (!fresh.length) return null;
+  const id = `g${Date.now().toString(36).slice(-6)}${Math.floor(Math.random() * 1296).toString(36)}`;
+  const group = normalizeGroup({ id, name: name || `母集 ${profile.groups.length + 1}`, members: fresh, edges: [] }, id);
+  if (!group) return null;
+  profile.groups.push(group);
+  return group;
+}
+
+/** 删除母集（只删分组关系，元素的调整值原样保留）。 */
+export function removeGroup(profile, id) {
+  if (!profile || !Array.isArray(profile.groups)) return null;
+  const index = profile.groups.findIndex((group) => group.id === id);
+  if (index < 0) return null;
+  return profile.groups.splice(index, 1)[0] || null;
+}
+
+/** 把元素移出母集；母集被搬空时顺手删掉，返回 { group, empty }。 */
+export function removeFromGroup(profile, selector) {
+  const group = groupOf(profile, selector);
+  if (!group) return null;
+  group.members = group.members.filter((item) => item !== selector);
+  if (!group.members.length) {
+    removeGroup(profile, group.id);
+    return { group, empty: true };
+  }
+  return { group, empty: false };
+}
+
+/** 母集的边界锁定：同一侧只留一条。 */
+export function setGroupEdge(profile, id, side, gap) {
+  const group = groupById(profile, id);
+  if (!group || !BOUNDARY_SIDES.includes(side)) return null;
+  if (!Array.isArray(group.edges)) group.edges = [];
+  const existing = group.edges.find((edge) => edge.side === side);
+  const value = round2(clampAbs(finite(gap, 0)));
+  if (existing) existing.gap = value;
+  else group.edges.push({ side, gap: value });
+  return group.edges.find((edge) => edge.side === side) || null;
+}
+
+export function clearGroupEdges(profile, id) {
+  const group = groupById(profile, id);
+  if (!group) return false;
+  group.edges = [];
+  return true;
+}
+
 /** 一套空方案。 */
 export function emptyProfile() {
-  return { entries: [] };
+  return { entries: [], anchors: [], groups: [] };
 }
 
 /**
- * 任意输入 → 干净布局（v2：{ version, updatedAt, profiles: { desktop, mobile } }）。
- * 兼容 v1 的 { entries } ：那是有设备方案之前的文件，全部归到 desktop。
+ * 任意输入 → 干净布局（v4：{ version, updatedAt, profiles: { desktop: {entries, anchors, groups}, mobile: … } }）。
+ * v3 / v2 / v1 的文件都能读：缺 anchors / groups 时按空数组补齐，不会丢已有布局。
  */
 export function normalizeLayout(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
@@ -127,7 +334,12 @@ export function normalizeLayout(raw) {
     } else if (legacyEntries && kind === 'desktop') {
       list = legacyEntries;
     }
-    profiles[kind] = { entries: normalizeEntries(list) };
+    const entries = normalizeEntries(list);
+    const anchors = normalizeAnchors(profilesIn ? profilesIn[kind]?.anchors : null);
+    // 母集成员允许暂时没有调整值（还没被拖过的元素），所以这里不按 entries 过滤：
+    // 成员在界面上找不到时，求边界 / 选中时会被自动跳过。
+    const groups = normalizeGroups(profilesIn ? profilesIn[kind]?.groups : null);
+    profiles[kind] = { entries, anchors, groups };
   }
   return {
     version: LAYOUT_VERSION,
@@ -203,13 +415,25 @@ function scopeSelector(selector) {
   return `${root} ${sel}`;
 }
 
-/** 一套方案 → CSS 文本。空方案返回空串。 */
-export function toCss(profile) {
+/**
+ * 一套方案 → CSS 文本。空方案返回空串。
+ * extras（可选）：Map<选择器, {x, y}>，是「边距固定」解算出来的追加位移（设计像素），
+ * 会叠加到该元素原本的 x / y 上；没有对应的 entry 时单独出一条只有 translate 的规则。
+ */
+export function toCss(profile, extras = null) {
   const out = [];
+  const extraFor = (selector) => (extras instanceof Map ? extras.get(selector) : null);
+  const covered = new Set();
   for (const e of profile?.entries || []) {
     const scoped = scopeSelector(e.selector);
+    covered.add(e.selector);
     const decls = [];
-    if (e.x || e.y) decls.push(`translate: ${toRem(e.x)} ${toRem(e.y)} !important;`);
+    const extra = extraFor(e.selector);
+    const ex = extra ? extra.x : 0;
+    const ey = extra ? extra.y : 0;
+    const x = round2((e.x || 0) + ex);
+    const y = round2((e.y || 0) + ey);
+    if (x || y) decls.push(`translate: ${toRem(x)} ${toRem(y)} !important;`);
     if (e.w != null) decls.push(`width: ${toRem(e.w)} !important;`);
     if (e.h != null) decls.push(`height: ${toRem(e.h)} !important;`);
     if (e.scale != null && e.scale !== 1) decls.push(`scale: ${e.scale} !important;`);
@@ -231,15 +455,252 @@ export function toCss(profile) {
       out.push(`${scoped}::before,\n${scoped}::after {\n  display: none !important;\n}`);
     }
   }
+  // 只被「边距固定」挪动、自己没有任何调整条目的元素
+  if (extras instanceof Map) {
+    for (const [selector, extra] of extras) {
+      if (covered.has(selector) || !extra) continue;
+      const x = round2(extra.x);
+      const y = round2(extra.y);
+      if (!x && !y) continue;
+      out.push(`${scopeSelector(selector)} {\n  translate: ${toRem(x)} ${toRem(y)} !important;\n}`);
+    }
+  }
   if (!out.length) return '';
   return `/* Stronghold Protocol · UI 布局覆盖（由 UI 布局编辑器生成）*/\n${out.join('\n\n')}\n`;
 }
 
+// 上一次真正写进 <style> 的追加位移：解算时用它把实测 rect 还原成「不含补偿」的基准位置，
+// 这样每帧都是从基准重算，不会把误差一代代累积下去。
+let appliedExtras = new Map();
 let styleEl = null;
 
-/** 把一套方案编译并写进 <style>，页面上的元素立刻按新位置显示。 */
-export function applyLayout(profile) {
-  const css = toCss(profile);
+/** 设计像素 ↔ 屏幕像素（1rem = 100 设计像素）。 */
+function remPxNow() {
+  try {
+    const value = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    return Number.isFinite(value) && value > 0 ? value : 100;
+  } catch {
+    return 100;
+  }
+}
+
+/** 选择器 → 元素（找不到就 null，绝不抛错）。 */
+function findElement(selector) {
+  try {
+    const el = document.querySelector(selector);
+    if (el) return el;
+  } catch { /* 选择器失效 */ }
+  try {
+    return document.querySelector(scopeSelector(selector));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 按「边距固定」/「母集贴边」关系算出一批追加位移（设计像素）。
+ * skip 里的目标本轮不重算（编辑器正在手拖它），保留上一次的值，避免松手前跳一下。
+ * reset 里的目标连保留都不保留：调用方已经把这些补偿并进了 x / y，这一轮从干净的 base 起算。
+ */
+export function resolveAnchors(profile, skip = null, reset = null) {
+  const extras = new Map();
+  const anchors = Array.isArray(profile?.anchors) ? profile.anchors : [];
+  const groups = Array.isArray(profile?.groups) ? profile.groups : [];
+  if ((!anchors.length && !groups.length) || typeof document === 'undefined') return extras;
+  const rem = remPxNow();
+  const pxToDesign = 100 / rem;
+
+  // 实测 rect 减去上一轮的追加位移 = 这个元素「只按 entry 摆好」时的基准 rect。
+  const baseRects = new Map();
+  const baseRect = (selector) => {
+    if (baseRects.has(selector)) return baseRects.get(selector);
+    let rect = null;
+    const el = findElement(selector);
+    if (el) {
+      const box = el.getBoundingClientRect();
+      if (box.width > 0 || box.height > 0) {
+        const applied = appliedExtras.get(selector);
+        const dx = applied ? applied.x / pxToDesign : 0;
+        const dy = applied ? applied.y / pxToDesign : 0;
+        rect = {
+          left: box.left - dx,
+          top: box.top - dy,
+          right: box.right - dx,
+          bottom: box.bottom - dy,
+        };
+      }
+    }
+    baseRects.set(selector, rect);
+    return rect;
+  };
+  const shifted = (rect, extra) => (
+    extra ? { left: rect.left + extra.x, top: rect.top + extra.y, right: rect.right + extra.x, bottom: rect.bottom + extra.y } : rect
+  );
+
+  // 屏幕边界（#app 的矩形；没有 #app 时退化成窗口）。
+  let boundaryCache = null;
+  const boundaryRect = () => {
+    if (boundaryCache) return boundaryCache;
+    let rect = null;
+    const el = findElement('#app');
+    if (el) {
+      const box = el.getBoundingClientRect();
+      if (box.width > 0 && box.height > 0) rect = { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+    }
+    if (!rect) {
+      const root = document.documentElement;
+      rect = { left: 0, top: 0, right: root?.clientWidth || 0, bottom: root?.clientHeight || 0 };
+    }
+    boundaryCache = rect;
+    return rect;
+  };
+
+  /** 让 box 满足某条边界关系还需要平移多少（屏幕像素，正数 = 往右 / 往下）。 */
+  const boundaryDelta = (box, side, gapPx) => {
+    const b = boundaryRect();
+    if (side === 'left') return (b.left + gapPx) - box.left;
+    if (side === 'right') return (b.right - gapPx) - box.right;
+    if (side === 'top') return (b.top + gapPx) - box.top;
+    if (side === 'bottom') return (b.bottom - gapPx) - box.bottom;
+    if (side === 'centerX') return ((b.left + b.right) - (box.left + box.right)) / 2;
+    return ((b.top + b.bottom) - (box.top + box.bottom)) / 2;
+  };
+  const axisOf = (side) => (side === 'left' || side === 'right' || side === 'centerX' ? 'x' : 'y');
+
+  for (const anchor of anchors) {
+    if (reset && reset.has(anchor.selector)) continue;
+    if (skip && skip.has(anchor.selector)) {
+      const applied = appliedExtras.get(anchor.selector);
+      if (applied) extras.set(anchor.selector, { x: applied.x, y: applied.y });
+    }
+  }
+
+  /** 母集：成员矩形求并集（含本轮已算出的追加位移）。 */
+  const groupBox = (group) => {
+    let box = null;
+    for (const selector of group.members) {
+      const base = baseRect(selector);
+      if (!base) continue;
+      const rect = shifted(base, extras.get(selector));
+      if (!box) {
+        box = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+        continue;
+      }
+      box.left = Math.min(box.left, rect.left);
+      box.top = Math.min(box.top, rect.top);
+      box.right = Math.max(box.right, rect.right);
+      box.bottom = Math.max(box.bottom, rect.bottom);
+    }
+    return box;
+  };
+
+  // 组贴边 + 元素锚定交替几轮：两边都会产生位移，迭代收敛（位移是线性的，三轮足够）。
+  for (let pass = 0; pass < 3; pass++) {
+    let changed = false;
+
+    for (const group of groups) {
+      const edges = Array.isArray(group.edges) ? group.edges : [];
+      if (!edges.length) continue;
+      // 正在手拖 / 手缩放这一组里的成员时不参与解算，否则会跟手抢。
+      if (skip && group.members.some((selector) => skip.has(selector))) continue;
+      if (reset && group.members.some((selector) => reset.has(selector))) continue;
+      const box = groupBox(group);
+      if (!box) continue;
+      const shift = { x: 0, y: 0 };
+      for (const edge of edges) {
+        const delta = boundaryDelta(box, edge.side, edge.gap / pxToDesign);
+        if (!Number.isFinite(delta)) continue;
+        if (axisOf(edge.side) === 'x') shift.x = delta;
+        else shift.y = delta;
+      }
+      if (Math.abs(shift.x) < 0.05 && Math.abs(shift.y) < 0.05) continue;
+      const dx = shift.x * pxToDesign;
+      const dy = shift.y * pxToDesign;
+      for (const selector of group.members) {
+        const current = extras.get(selector) || { x: 0, y: 0 };
+        extras.set(selector, { x: current.x + dx, y: current.y + dy });
+      }
+      changed = true;
+    }
+
+    for (const anchor of anchors) {
+      if (skip && skip.has(anchor.selector)) continue;
+      if (reset && reset.has(anchor.selector)) continue;
+      const targetBase = baseRect(anchor.selector);
+      if (!targetBase) continue;
+      const current = extras.get(anchor.selector) || { x: 0, y: 0 };
+      const target = shifted(targetBase, current);
+      const gapPx = anchor.gap / pxToDesign;
+      let deltaPx = 0;
+      let axis = 'y';
+      if (anchor.to === BOUNDARY_TARGET) {
+        deltaPx = boundaryDelta(target, anchor.side, gapPx);
+        axis = axisOf(anchor.side);
+      } else {
+        const refBase = baseRect(anchor.to);
+        if (!refBase) continue;
+        const ref = shifted(refBase, extras.get(anchor.to));
+        // 链式关系（A 锁 B、B 锁 C）靠几轮迭代收敛。
+        if (anchor.side === 'below' || anchor.side === 'above') {
+          deltaPx = anchor.side === 'below' ? (ref.bottom + gapPx) - target.top : (ref.top - gapPx) - target.bottom;
+          axis = 'y';
+        } else {
+          deltaPx = anchor.side === 'right' ? (ref.right + gapPx) - target.left : (ref.left - gapPx) - target.right;
+          axis = 'x';
+        }
+      }
+      if (!Number.isFinite(deltaPx) || Math.abs(deltaPx) < 0.05) continue;
+      const delta = deltaPx * pxToDesign;
+      extras.set(anchor.selector, axis === 'x'
+        ? { x: current.x + delta, y: current.y }
+        : { x: current.x, y: current.y + delta });
+      changed = true;
+    }
+
+    if (!changed) break;
+  }
+  return extras;
+}
+
+/**
+ * 一组选择器 → 页面上的并集矩形（屏幕像素）。母集边界就是这么来的：
+ * 每次都按成员实测位置重算，所以子元素一动，边界立刻跟着动。
+ */
+export function boundsOf(selectors) {
+  if (typeof document === 'undefined') return null;
+  let box = null;
+  for (const selector of Array.isArray(selectors) ? selectors : []) {
+    const el = findElement(selector);
+    if (!el) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 0.5 && rect.height < 0.5) continue;
+    if (!box) {
+      box = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      continue;
+    }
+    box.left = Math.min(box.left, rect.left);
+    box.top = Math.min(box.top, rect.top);
+    box.right = Math.max(box.right, rect.right);
+    box.bottom = Math.max(box.bottom, rect.bottom);
+  }
+  if (!box) return null;
+  box.width = box.right - box.left;
+  box.height = box.bottom - box.top;
+  return box;
+}
+
+/**
+ * 把一套方案编译并写进 <style>，页面上的元素立刻按新位置显示。
+ * options.skip：本轮不要重算的目标选择器集合（编辑器正在拖动 / 缩放它们）。
+ * options.reset：这些目标的补偿已经并进 x / y，本轮不再追加。
+ * options.solve === false：完全不处理「边距固定」与「母集贴边」（用于清空 / 换设备后先落一遍基础样式）。
+ */
+export function applyLayout(profile, options = {}) {
+  const skip = options.skip ? new Set(options.skip) : null;
+  const reset = options.reset ? new Set(options.reset) : null;
+  const extras = options.solve === false ? new Map() : resolveAnchors(profile, skip, reset);
+  const css = toCss(profile, extras);
+  appliedExtras = extras;
   if (!styleEl || !styleEl.isConnected) {
     styleEl = document.getElementById(STYLE_ID);
     if (!styleEl) {
@@ -283,8 +744,16 @@ export async function saveLayout(layout) {
     version: LAYOUT_VERSION,
     updatedAt: new Date().toISOString(),
     profiles: {
-      desktop: { entries: profileOf(layout, 'desktop').entries },
-      mobile: { entries: profileOf(layout, 'mobile').entries },
+      desktop: {
+        entries: profileOf(layout, 'desktop').entries,
+        anchors: profileOf(layout, 'desktop').anchors || [],
+        groups: profileOf(layout, 'desktop').groups || [],
+      },
+      mobile: {
+        entries: profileOf(layout, 'mobile').entries,
+        anchors: profileOf(layout, 'mobile').anchors || [],
+        groups: profileOf(layout, 'mobile').groups || [],
+      },
     },
   };
   try {

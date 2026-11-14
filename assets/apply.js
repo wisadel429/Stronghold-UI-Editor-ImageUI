@@ -45,23 +45,47 @@ function markUrlAsEdit() {
 async function boot() {
   const result = await fetchLayout();
   let kind = EMBED ? FORCED_KIND : currentDeviceKind();
-  applyLayout(profileOf(result.layout, kind));
+  const profileNow = () => profileOf(result.layout, kind);
+  const applyNow = () => applyLayout(profileNow());
+  applyNow();
 
   const follow = () => {
     const next = currentDeviceKind();
-    if (next === kind) return;
+    if (next === kind) return false;
     kind = next;
-    applyLayout(profileOf(result.layout, kind));
+    applyNow();
+    return true;
   };
+
+  // 「边距固定」「母集贴边」都是按实测 rect 反算的：窗口比例变化、界面晚渲染出来、切界面之后
+  // 都要重算一遍，否则被锁元素会停在上一次算出来的位置。
+  const hasConstraints = () => {
+    const current = profileNow();
+    if (Array.isArray(current?.anchors) && current.anchors.length > 0) return true;
+    return Array.isArray(current?.groups)
+      && current.groups.some((group) => Array.isArray(group.edges) && group.edges.length > 0);
+  };
+  const reanchor = () => { if (hasConstraints()) applyNow(); };
 
   // 嵌入式编辑台自己控制设备方案（舞台比例固定），不再跟随窗口宽度自动切换。
   if (!EDIT_MODE && !EMBED) {
-    window.addEventListener('resize', debounce(follow, 150));
+    window.addEventListener('resize', debounce(() => { follow(); reanchor(); }, 150));
     for (const query of ['(max-width: 767px)', '(pointer: coarse)', '(any-pointer: coarse)']) {
       try {
-        window.matchMedia(query).addEventListener('change', follow);
+        window.matchMedia(query).addEventListener('change', () => { follow(); reanchor(); });
       } catch { /* 老浏览器没有 addEventListener */ }
     }
+    // 首次载入时界面 / 字体 / 图片还没排好，隔几个时间点补算几次。
+    for (const delay of [300, 1200, 3200]) {
+      setTimeout(reanchor, delay);
+    }
+    // 切换界面会重建 DOM：被锁的元素重新出现后再算一次（防抖，避免每帧重排）。
+    try {
+      const app = document.getElementById('app');
+      if (app && typeof MutationObserver === 'function') {
+        new MutationObserver(debounce(reanchor, 260)).observe(app, { childList: true, subtree: true });
+      }
+    } catch { /* 忽略 */ }
   }
 
   // 方便在控制台里排查：window.__spUiLayout.last / .reload() / .kind()
@@ -71,9 +95,10 @@ async function boot() {
     async reload() {
       const next = await fetchLayout();
       result.layout = next.layout;
-      applyLayout(profileOf(next.layout, kind));
+      applyNow();
       return next;
     },
+    reanchor,
   };
 
   // 启动器点了「UI 编辑器」会留一个一次性标记：正常地址打开游戏时也自动进编辑器。

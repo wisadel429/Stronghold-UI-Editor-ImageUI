@@ -14,6 +14,8 @@
   };
   var POS_KEY = 'spui.studio.kind';
   var STEP_VALUES = [0.5, 1, 5, 10];
+  var SNAP_DISTANCES = [4, 8, 14];
+  var SIDE_LABEL = { below: '下方', above: '上方', right: '右侧', left: '左侧' };
 
   var el = function (id) { return document.getElementById(id); };
   var ui = {
@@ -98,6 +100,25 @@
     btnHide: el('btnHide'),
     btnReset: el('btnReset'),
     btnCopyOther: el('btnCopyOther'),
+    btnSnap: el('btnSnap'),
+    btnSnapDist: el('btnSnapDist'),
+    btnGapLock: el('btnGapLock'),
+    btnGapUnlock: el('btnGapUnlock'),
+    anchors: el('anchors'),
+    alignTip: el('alignTip'),
+    alignHint: el('alignHint'),
+    groupCount: el('groupCount'),
+    groupHint: el('groupHint'),
+    groups: el('groups'),
+    groupMembers: el('groupMembers'),
+    groupEdges: el('groupEdges'),
+    groupGap: el('groupGap'),
+    edgeChips: el('edgeChips'),
+    btnGroupCreate: el('btnGroupCreate'),
+    btnGroupDelete: el('btnGroupDelete'),
+    btnGroupDetach: el('btnGroupDetach'),
+    btnGroupBoundary: el('btnGroupBoundary'),
+    btnGroupEdgeClear: el('btnGroupEdgeClear'),
   };
 
   var host = window.chrome && window.chrome.webview ? window.chrome.webview : null;
@@ -494,6 +515,177 @@
       .catch(function (error) { showToast('上传失败：' + (error.message || error), true); });
   }
 
+  /** 「边距固定」列表：每条显示 参照 → 间距，✕ 直接解除。 */
+  function renderAnchors(list) {
+    var anchors = list || [];
+    ui.anchors.textContent = '';
+    if (!anchors.length) {
+      var empty = document.createElement('div');
+      empty.className = 'anchors__empty';
+      empty.textContent = '还没有固定边距';
+      ui.anchors.appendChild(empty);
+      return;
+    }
+    anchors.forEach(function (anchor) {
+      var row = document.createElement('div');
+      row.className = 'anchor';
+
+      var arrow = document.createElement('span');
+      arrow.className = 'anchor__arrow';
+      arrow.textContent = (anchor.side === 'left' || anchor.side === 'right') ? '↔' : '↕';
+
+      var label = document.createElement('span');
+      label.className = 'anchor__text';
+      label.textContent = SIDE_LABEL[anchor.side] + ' ' + Math.round(anchor.gap) + ' · ' + shortSelector(anchor.to);
+      label.title = '被锁元素：' + anchor.selector + '\n参照元素：' + anchor.to + '\n间距：' + anchor.gap + ' 设计像素';
+
+      var drop = document.createElement('button');
+      drop.type = 'button';
+      drop.className = 'anchor__drop';
+      drop.textContent = '×';
+      drop.title = '解除这条边距固定';
+      drop.onclick = function () { post('dropAnchor', { selector: anchor.selector }); };
+
+      row.appendChild(arrow);
+      row.appendChild(label);
+      row.appendChild(drop);
+      ui.anchors.appendChild(row);
+    });
+  }
+
+  var EDGE_LABEL = { left: '左', right: '右', top: '上', bottom: '下', centerX: '居中X', centerY: '居中Y' };
+
+  /** 母集列表 + 当前母集（成员 / 边界固定）。 */
+  function renderGroups(s) {
+    var groups = (s && s.groups) || [];
+    var selected = s && s.selected;
+    var group = s && s.group;
+
+    text(ui.groupCount, String(groups.length));
+    ui.groups.textContent = '';
+    if (!groups.length) {
+      var empty = document.createElement('div');
+      empty.className = 'groups__empty';
+      empty.textContent = '还没有母集：选中元素后点「建母集」';
+      ui.groups.appendChild(empty);
+    } else {
+      groups.forEach(function (item, index) {
+        var row = document.createElement('div');
+        row.className = 'group' + (s.groupId === item.id ? ' is-on' : '');
+
+        var name = document.createElement('button');
+        name.type = 'button';
+        name.className = 'group__name';
+        name.textContent = (item.name || ('母集 ' + (index + 1))) + ' · ' + item.memberCount + ' 项';
+        name.title = '点击选中母集：拖动整组移动，拖四角整组等比缩放';
+        name.onclick = function () { post('groupSelect', { id: item.id }); };
+
+        var meta = document.createElement('span');
+        meta.className = 'group__meta';
+        meta.textContent = (item.edges || []).map(function (edge) { return EDGE_LABEL[edge.side] || edge.side; }).join(' ');
+        if ((item.liveCount || 0) < item.memberCount) {
+          meta.textContent = (meta.textContent ? meta.textContent + ' · ' : '') + '缺 ' + (item.memberCount - item.liveCount);
+        }
+
+        var drop = document.createElement('button');
+        drop.type = 'button';
+        drop.className = 'group__drop';
+        drop.textContent = '×';
+        drop.title = '删除这个母集（元素留在原位）';
+        drop.onclick = function () {
+          ask('删除母集', '删除「' + (item.name || '母集') + '」？' + item.memberCount + ' 个元素会留在原位，之后可以单独调整。', [
+            { label: '删除', value: 'del', kind: 'danger' },
+            { label: '取消', value: null },
+          ]).then(function (answer) { if (answer === 'del') post('groupDelete', { id: item.id }); });
+        };
+
+        row.appendChild(name);
+        row.appendChild(meta);
+        row.appendChild(drop);
+        ui.groups.appendChild(row);
+      });
+    }
+
+    var inGroup = !!(selected && groups.some(function (item) {
+      return (item.members || []).indexOf(selected.selector) >= 0;
+    }));
+    ui.btnGroupCreate.disabled = !(s && s.selectionCount >= 1);
+    ui.btnGroupDelete.disabled = !(s && s.groupId);
+    ui.btnGroupDetach.disabled = !(s && s.selectionCount >= 1 && (inGroup || !!group));
+    ui.btnGroupBoundary.disabled = !(s && s.selectionCount >= 1);
+
+    var edges = (group && group.edges) || [];
+    var elementAnchor = selected && selected.anchor && selected.anchor.to === '@screen' ? selected.anchor : null;
+    var showEdges = !!(group || elementAnchor);
+    ui.groupEdges.hidden = !showEdges;
+    var active = {};
+    if (showEdges) {
+      edges.forEach(function (edge) { active[edge.side] = edge.gap; });
+      if (elementAnchor) active[elementAnchor.side] = elementAnchor.gap;
+      Array.prototype.forEach.call(ui.edgeChips.querySelectorAll('button'), function (button) {
+        button.classList.toggle('is-on', active[button.dataset.edge] != null);
+      });
+      var gap = edges.length ? edges[0].gap : (elementAnchor ? elementAnchor.gap : '');
+      if (document.activeElement !== ui.groupGap) {
+        ui.groupGap.value = gap === '' || gap == null ? '' : String(Math.round(gap));
+      }
+    }
+    ui.btnGroupBoundary.classList.toggle('is-on', edges.length > 0 || !!elementAnchor);
+
+    ui.groupMembers.textContent = '';
+    if (group && group.members) {
+      group.members.forEach(function (member) {
+        var row = document.createElement('div');
+        row.className = 'gmember' + (selected && selected.selector === member.selector ? ' is-on' : '');
+
+        var name = document.createElement('button');
+        name.type = 'button';
+        name.className = 'gmember__name';
+        name.textContent = member.label;
+        name.title = member.selector + '\n点击只选中这个成员（可单独拖动，或点「移出」离开母集）';
+        name.onclick = function () { post('select', { selector: member.selector, deep: true }); };
+
+        var out = document.createElement('button');
+        out.type = 'button';
+        out.className = 'gmember__out';
+        out.textContent = '移出';
+        out.title = '把这个成员移出母集（位置保持不变）';
+        out.onclick = function () {
+          post('select', { selector: member.selector, deep: true });
+          post('groupDetach');
+        };
+
+        row.appendChild(name);
+        row.appendChild(out);
+        ui.groupMembers.appendChild(row);
+      });
+    }
+    text(ui.groupHint, group ? ('当前母集 ' + group.members.length + ' 项') : '整组移动 · 等比缩放');
+  }
+
+  /** 吸附开关 / 范围 / 固定边距按钮的可用状态。 */
+  function renderAlign(s) {
+    if (!s) {
+      ui.btnSnap.disabled = true;
+      ui.btnSnapDist.disabled = true;
+      ui.btnGapLock.disabled = true;
+      ui.btnGapUnlock.disabled = true;
+      return;
+    }
+    ui.btnSnap.disabled = false;
+    ui.btnSnap.classList.toggle('is-on', !!s.snap);
+    text(ui.btnSnap, s.snap ? '吸附 · 开' : '吸附 · 关');
+    ui.btnSnapDist.textContent = (s.snapDistance || 8) + 'px';
+    ui.btnSnapDist.disabled = !s.snap;
+    ui.btnGapLock.disabled = !(s.selectionCount > 1);
+    var selected = s.selected;
+    var locked = s.anchors || [];
+    var hasAnchor = !!(selected && locked.some(function (a) { return a.selector === selected.selector; }));
+    ui.btnGapUnlock.disabled = !hasAnchor;
+    text(ui.alignHint, locked.length ? ('已锁 ' + locked.length + ' 处') : (s.snap ? '拖动时吸附' : '吸附已关闭'));
+    renderAnchors(locked);
+  }
+
   function renderSelection(s) {
     var selected = s.selected;
     var multi = s.selectionCount > 1;
@@ -578,6 +770,7 @@
     var bits = [];
     if (entry.hidden) bits.push('隐藏');
     if (entry.image) bits.push(entry.imageMode === 'overlay' ? '覆盖图' : '图片');
+    if (entry.anchor) bits.push('锁' + Math.round(entry.anchor.gap));
     if (entry.x || entry.y) bits.push(entry.x + ',' + entry.y);
     if (entry.w != null || entry.h != null) bits.push((entry.w == null ? '自动' : entry.w) + '×' + (entry.h == null ? '自动' : entry.h));
     if (entry.scale != null && entry.scale !== 1) bits.push(Math.round(entry.scale * 100) + '%');
@@ -607,7 +800,7 @@
       name.className = 'entry__name';
       name.textContent = shortSelector(entry.selector);
       name.title = entry.selector;
-      name.onclick = function () { post('select', { selector: entry.selector }); };
+      name.onclick = function () { post('select', { selector: entry.selector, deep: true }); };
       var meta = document.createElement('span');
       meta.className = 'entry__meta';
       meta.textContent = describe(entry);
@@ -665,6 +858,8 @@
     renderDevice();
     renderMode(s);
     renderMulti(s);
+    renderAlign(s);
+    renderGroups(s);
     renderImage(s);
     renderSelection(s);
     renderEntries(s);
@@ -746,6 +941,83 @@
     if (!state.last) return;
     post('setEditing', { on: !state.last.editing });
   };
+
+  // ── 对齐与边距 ─────────────────────────────────────────
+  ui.btnSnap.onclick = function () {
+    if (!state.last) return;
+    post('setSnap', { on: !state.last.snap });
+  };
+
+  ui.btnSnapDist.onclick = function () {
+    if (!state.last) return;
+    var index = SNAP_DISTANCES.indexOf(state.last.snapDistance || 8);
+    var next = SNAP_DISTANCES[(index + 1) % SNAP_DISTANCES.length];
+    post('setSnapDistance', { value: next });
+    showToast('吸附范围：' + next + 'px');
+  };
+
+  ui.btnGapLock.onclick = function () {
+    if (!state.last) return;
+    if (state.last.selectionCount < 2) {
+      showToast('先点选参照元素，再按住 Shift 点要固定的元素', true);
+      return;
+    }
+    post('lockGap');
+  };
+
+  ui.btnGapUnlock.onclick = function () {
+    if (!state.last) return;
+    post('unlockGap');
+  };
+
+  // ── 母集 ───────────────────────────────────────────────
+  ui.btnGroupCreate.onclick = function () {
+    if (!state.last) return;
+    if (!state.last.selectionCount) {
+      showToast('先选中要打包的元素（Shift+点击可多选）', true);
+      return;
+    }
+    post('groupCreate');
+  };
+
+  ui.btnGroupDelete.onclick = function () {
+    if (!state.last || !state.last.groupId) return;
+    post('groupDelete', { id: state.last.groupId });
+  };
+
+  ui.btnGroupDetach.onclick = function () {
+    if (!state.last) return;
+    post('groupDetach');
+  };
+
+  ui.btnGroupBoundary.onclick = function () {
+    if (!state.last) return;
+    post('boundaryLock');
+  };
+
+  Array.prototype.forEach.call(ui.edgeChips.querySelectorAll('button'), function (button) {
+    button.onclick = function () {
+      if (!state.last) return;
+      var side = button.dataset.edge;
+      if (state.last.groupId) post('groupEdge', { side: side });
+      else post('boundaryLock', { side: side });
+    };
+  });
+
+  ui.btnGroupEdgeClear.onclick = function () {
+    if (!state.last) return;
+    if (state.last.groupId) post('groupEdgeClear');
+    else post('boundaryClear');
+  };
+
+  ui.groupGap.addEventListener('change', function () {
+    var value = Number(ui.groupGap.value);
+    if (!Number.isFinite(value)) return;
+    post('boundaryGap', { value: value });
+  });
+  ui.groupGap.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') { event.preventDefault(); ui.groupGap.blur(); }
+  });
 
   ui.btnMulti.onclick = function () {
     if (!state.last) return;
